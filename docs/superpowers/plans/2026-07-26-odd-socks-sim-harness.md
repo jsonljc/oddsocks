@@ -25,6 +25,23 @@
 - **Numbers for six players:** 5 lights required, 6 active nights, 7 nights total, night 1 safe.
 - **Commit after every task.** Conventional commit messages (`feat:`, `test:`, `chore:`).
 
+## Amendments made during execution
+
+Review found these defects in the plan itself. The code below still shows the original in places;
+where they disagree, **this list governs**.
+
+| Where | Change | Why |
+|---|---|---|
+| Task 1 / Task 3 | `npm test` runs `tsc --noEmit && vitest run` | Vitest strips types with esbuild and never checks them, so strict mode caught nothing and a `@ts-expect-error` proved nothing. |
+| Task 3 | Every `GameConfig` field `readonly`, nested containers `Readonly<>` | `makeConfig`'s shallow spread shares `itemCounts`/`layers` with `DEFAULT_CONFIG`; one in-place write would corrupt every later game in the process, silently. |
+| Task 3 | `itemsCanBeDropped` deleted | Declared and read by nothing. Add it back when something reads it. |
+| Task 4 | `lanternRoom: RoomId \| null` → `lanternRooms: RoomId[]`; `bellWatch: PlayerId \| null` → `bellWatches: { spender; target }[]`; `isLit` checks membership | Two Lanterns are in the default pool, so two spent in one morning is ordinary play. As scalars, the second silently voided the first while both spenders paid. |
+| Task 4 | `PublicEvent` gains `{ t: 'bellCast'; spender; target }` | The rules make spending a Bell public, and the named child *knowing* they are watched is the point of the item. Without it a Belled villain cannot dodge, and the sweep would measure the Bell as stronger than it is. |
+| Task 5 | `resolveMovement` also throws on a `paths` key absent from `from` | Validation was one-directional; the extra submission was silently dropped rather than failing loud. |
+| Task 10 | Keyhole throws on a night with no record, *before* charging the spender | An unfindable night produced `occupants: []`, indistinguishable from a genuinely empty room — in the one mechanism whose job is catching liars. |
+| Task 10 | `resolveBellWatch` credits the real caster and throws on a missing midnight position | `spender` was hardcoded to the watched child, so it was wrong on every emission. |
+| Task 15 | A free self-snuff grants `activeNights + 1` | `selfSnuffCostsNight` was read by nothing and could not bite where the plan put it, so Task 20's `hush-silent-freeSnuff` cell would have duplicated the baseline and read as a null result. |
+
 ## File Structure
 
 | File | Responsibility |
