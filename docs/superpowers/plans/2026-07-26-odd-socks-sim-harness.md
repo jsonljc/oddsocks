@@ -542,7 +542,6 @@ describe('config', () => {
   it('defaults to the rulings recorded in the spec', () => {
     expect(DEFAULT_CONFIG.hushMode).toBe('silent');
     expect(DEFAULT_CONFIG.selfSnuffCostsNight).toBe(true);
-    expect(DEFAULT_CONFIG.itemsCanBeDropped).toBe(false);
     expect(DEFAULT_CONFIG.sparrowMode).toBe('dusk');
     expect(DEFAULT_CONFIG.trailRadius).toBe(1);
     expect(DEFAULT_CONFIG.callHandsRequired).toBe(2);
@@ -618,7 +617,6 @@ export interface GameConfig {
   itemCounts: Record<ItemKind, number>;
   itemsOnMap: number;
   itemRespawnDelay: number;
-  itemsCanBeDropped: boolean;
   carryCapacity: number;
   mossCarryCapacity: number;
 
@@ -645,7 +643,6 @@ export const DEFAULT_CONFIG: GameConfig = {
   itemCounts: { lantern: 2, keyhole: 2, bell: 1 },
   itemsOnMap: 3,
   itemRespawnDelay: 2,
-  itemsCanBeDropped: false,
   carryCapacity: 1,
   mossCarryCapacity: 2,
 
@@ -660,11 +657,24 @@ export function makeConfig(overrides: Partial<GameConfig> = {}): GameConfig {
 }
 ```
 
-**One field is deliberately inert.** `itemsCanBeDropped` is declared and defaults to `false`, but
-build one implements no drop action at all, so nothing reads it. It exists because the spec's §3.3
-identifies dropping as the unwritten rule that decides whether the Grip has teeth — when that
-question comes up for measurement, the switch is already in the config surface and the sweep matrix
-can reach it. Do not delete it, and do not write a drop action for it now.
+**Every field of `GameConfig` is `readonly`, and the nested containers are readonly too**
+(`itemCounts: Readonly<Record<ItemKind, number>>`, `layers: Readonly<LayerFlags>`, and `LayerFlags`'s
+own fields `readonly`). `makeConfig`'s shallow spread would otherwise hand every caller the *same*
+`itemCounts` and `layers` objects that live inside `DEFAULT_CONFIG` — one in-place write anywhere in
+seventeen later tasks would corrupt the default for the rest of the process, and a sweep would
+report wrong numbers with no crash and no symptom. The readonly modifiers make that a compile error
+instead. Keep the spread as written; it constructs a new object and still type-checks.
+
+Add a test that fails if the modifiers are ever removed:
+
+```ts
+  it('forbids writing through a config', () => {
+    const c = makeConfig();
+    // @ts-expect-error itemCounts is readonly — mutating it would corrupt DEFAULT_CONFIG
+    c.itemCounts.lantern = 999;
+    expect(DEFAULT_CONFIG.itemCounts.lantern).toBe(2);
+  });
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 

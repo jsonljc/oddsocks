@@ -108,8 +108,10 @@ almost never fires and the Grip reduces to a consolation prize.
 
 This turns entirely on an unwritten rule: **can items be dropped?**
 
-**Ruling:** `itemsCanBeDropped: boolean`, default `false`. With no drop action, a villain who picked
-up an item earlier is stuck holding it and the Grip has teeth.
+**Ruling:** dropping is not permitted, and build one implements no drop action at all — a villain
+who picked up an item earlier is stuck holding it, so the Grip has teeth. This is deliberately *not*
+a config switch: a knob nothing reads is a question every future reader has to ask. When the Grip's
+teeth become worth measuring, add the boolean then.
 
 ### 3.4 Theft nights are self-concealing (this is correct, and it is load-bearing)
 
@@ -141,7 +143,7 @@ v10.0 does not answer these. Each is decided here explicitly.
 | R5 | Two players on one item at dusk | Random one takes it. (Contested items were cut.) |
 | R6 | Item pool | Fixed reserve of 5: 2 Lantern, 2 Keyhole, 1 Bell. Config. |
 | R7 | Items on the map | Spawn at each dusk until **3** are loose in common rooms, or the reserve empties. |
-| R8 | Dropping items | Not permitted (`itemsCanBeDropped: false`). |
+| R8 | Dropping items | Not permitted, and no drop action exists. Revisit only when the Grip's teeth are worth measuring. |
 | R9 | Carrying capacity | 1 item. Moss: 2. |
 | R10 | Is theft automatic? | Yes. Ending midnight in another child's lit bedroom steals that light. No declaration. |
 | R11 | Self-snuff | Ending midnight in your own lit bedroom as the villain **optionally** snuffs it, declared. Consumes the night's action when `selfSnuffCostsNight` is true. |
