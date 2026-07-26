@@ -17,6 +17,9 @@
 - **Everything pure.** Nothing under `src/rules/` may perform I/O, read the clock, or call `Math.random()`. All randomness arrives as an injected `Rng`.
 - **Every tunable lives in `GameConfig`.** No magic numbers in engine code. A sweep must be a parameter matrix, never a code edit.
 - **TypeScript strict mode on.** `strict: true`, `noUncheckedIndexedAccess: true`.
+- **`npm test` type-checks before it runs tests** (`tsc --noEmit && vitest run`, set up in Task 3).
+  Vitest strips types with esbuild and never checks them, so without this the compiler is never
+  invoked by anything automated and strict mode catches nothing on its own.
 - **Six-child roster:** `bell`, `pike`, `clem`, `wren`, `sparrow`, `moss`. These exact lowercase ids are used as `PlayerId` throughout.
 - **Bedroom ids** are `bed_<playerId>`, e.g. `bed_bell`.
 - **Numbers for six players:** 5 lights required, 6 active nights, 7 nights total, night 1 safe.
@@ -665,16 +668,40 @@ seventeen later tasks would corrupt the default for the rest of the process, and
 report wrong numbers with no crash and no symptom. The readonly modifiers make that a compile error
 instead. Keep the spread as written; it constructs a new object and still type-checks.
 
-Add a test that fails if the modifiers are ever removed:
+**The type check has to actually run, or the modifiers are decoration.** `vitest run` transforms
+with esbuild, which strips types without checking them, so a `@ts-expect-error` inside a test body
+is an inert comment at runtime — delete every `readonly` and the suite still passes. Change the test
+script so the compiler is part of the gate, and add a standalone one for iterating:
+
+```json
+"typecheck": "tsc --noEmit",
+"test": "tsc --noEmit && vitest run"
+```
+
+Then assert the guarantee without executing the write. `readonly` is compile-time only, so a
+mutation in a test body genuinely happens and would leave `DEFAULT_CONFIG` corrupted for every test
+after it. Put the assertion in a function nothing calls:
 
 ```ts
-  it('forbids writing through a config', () => {
-    const c = makeConfig();
-    // @ts-expect-error itemCounts is readonly — mutating it would corrupt DEFAULT_CONFIG
-    c.itemCounts.lantern = 999;
-    expect(DEFAULT_CONFIG.itemCounts.lantern).toBe(2);
+  it('locks nested config containers against writes at compile time', () => {
+    // Never invoked — it exists so tsc checks it. Delete the readonly modifiers
+    // and this @ts-expect-error becomes unused, which is itself a compile error
+    // (TS2578), so `npm test` fails.
+    const wouldNotCompile = (c: GameConfig): void => {
+      // @ts-expect-error itemCounts is readonly: writing through any config would
+      // corrupt DEFAULT_CONFIG, because makeConfig's spread shares the object.
+      c.itemCounts.lantern = 999;
+    };
+    expect(wouldNotCompile).toBeTypeOf('function');
+  });
+
+  it('shares nested containers with the default, which is why they are locked', () => {
+    expect(makeConfig({ trailRadius: 2 }).itemCounts).toBe(DEFAULT_CONFIG.itemCounts);
   });
 ```
+
+Verify it bites: remove the `readonly` from `itemCounts`, confirm `npm test` fails with TS2578,
+restore it, confirm it passes.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
