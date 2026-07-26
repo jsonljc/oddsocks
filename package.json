@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "test": "tsc --noEmit && vitest run",
+    "typecheck": "tsc --noEmit",
     "sweep": "tsx src/cli/sweep.ts"
   },
   "devDependencies": {

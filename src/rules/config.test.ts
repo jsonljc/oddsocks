@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_CONFIG, ROSTER, ODDITY_OF, makeConfig } from './config.js';
+import { DEFAULT_CONFIG, ROSTER, ODDITY_OF, makeConfig, type GameConfig } from './config.js';
 
 describe('config', () => {
   it('has the six-child roster', () => {
@@ -41,9 +41,19 @@ describe('config', () => {
     expect(DEFAULT_CONFIG.hushMode).toBe('silent');
   });
 
-  it('forbids writing through a config', () => {
-    const c = makeConfig();
-    // @ts-expect-error itemCounts is readonly — mutating it would corrupt DEFAULT_CONFIG
-    c.itemCounts.lantern = 999;
+  it('locks nested config containers against writes at compile time', () => {
+    // Never invoked — it exists so tsc checks it. Delete the readonly modifiers
+    // and this @ts-expect-error becomes unused, which is itself a compile error
+    // (TS2578), so `npm test` fails.
+    const wouldNotCompile = (c: GameConfig): void => {
+      // @ts-expect-error itemCounts is readonly: writing through any config would
+      // corrupt DEFAULT_CONFIG, because makeConfig's spread shares the object.
+      c.itemCounts.lantern = 999;
+    };
+    expect(wouldNotCompile).toBeTypeOf('function');
+  });
+
+  it('shares nested containers with the default, which is why they are locked', () => {
+    expect(makeConfig({ trailRadius: 2 }).itemCounts).toBe(DEFAULT_CONFIG.itemCounts);
   });
 });
