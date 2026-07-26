@@ -63,7 +63,7 @@ describe('sightingsAt', () => {
   it('treats a Lantern-lit room as lit', () => {
     const s = game();
     s.lit['bed_clem'] = false;
-    s.lanternRoom = 'bed_clem';
+    s.lanternRooms = ['bed_clem'];
     const sight = sightingsAt(s, { bell: 'bed_clem', pike: 'bed_clem' });
     expect(sight['bell']!.named).toEqual(['pike']);
   });

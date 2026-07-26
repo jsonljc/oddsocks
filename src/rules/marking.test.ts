@@ -46,7 +46,7 @@ describe('resolveMarking', () => {
 
   it('does nothing in a room a Lantern has relit', () => {
     const s = dark();
-    s.lanternRoom = 'bed_bell';
+    s.lanternRooms = ['bed_bell'];
     expect(resolveMarking(s, { moss: 'bed_bell', pike: 'bed_bell' }, makeRng(1)).marked).toBeNull();
   });
 

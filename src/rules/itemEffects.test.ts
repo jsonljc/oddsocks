@@ -19,6 +19,20 @@ describe('the Lantern', () => {
     clearNightlyItemEffects(s);
     expect(isLit(s, 'bed_bell')).toBe(false);
   });
+
+  it('lets two Lanterns spent the same morning both relight their rooms', () => {
+    const s = game();
+    s.lit['bed_bell'] = false;
+    s.lit['bed_clem'] = false;
+    s.held['pike'] = ['lantern'];
+    s.held['wren'] = ['lantern'];
+    applyItemUses(s, [
+      { kind: 'lantern', spender: 'pike', room: 'bed_bell' },
+      { kind: 'lantern', spender: 'wren', room: 'bed_clem' },
+    ]);
+    expect(isLit(s, 'bed_bell')).toBe(true);
+    expect(isLit(s, 'bed_clem')).toBe(true);
+  });
 });
 
 describe('the Keyhole', () => {
@@ -45,24 +59,49 @@ describe('the Keyhole', () => {
     const events = applyItemUses(s, [{ kind: 'keyhole', spender: 'pike', room: 'attic', night: 2 }]);
     expect((events[0] as { occupants: string[] }).occupants).toEqual([]);
   });
+
+  it('refuses a night that never happened, rather than reporting it as empty', () => {
+    const s = game();
+    s.held['pike'] = ['keyhole'];
+    s.history.push({
+      night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen' },
+      events: [], sightings: {}, claims: {},
+    });
+    expect(() => applyItemUses(s, [{ kind: 'keyhole', spender: 'pike', room: 'kitchen', night: 6 }]))
+      .toThrow(/no record of night/i);
+  });
 });
 
 describe('the Bell', () => {
-  it('watches a named child and announces their midnight room that night', () => {
+  it('announces the cast publicly in the morning it is spent', () => {
+    const s = game();
+    s.held['pike'] = ['bell'];
+    const events = applyItemUses(s, [{ kind: 'bell', spender: 'pike', target: 'moss' }]);
+    expect(events[0]).toMatchObject({ t: 'bellCast', spender: 'pike', target: 'moss' });
+  });
+
+  it('watches a named child and announces their midnight room that night, crediting the true spender', () => {
     const s = game();
     s.held['pike'] = ['bell'];
     applyItemUses(s, [{ kind: 'bell', spender: 'pike', target: 'moss' }]);
-    expect(s.bellWatch).toBe('moss');
+    expect(s.bellWatches).toEqual([{ spender: 'pike', target: 'moss' }]);
 
     const events = resolveBellWatch(s, { moss: 'sewing_room' });
-    expect(events[0]).toMatchObject({ t: 'bell', target: 'moss', room: 'sewing_room' });
+    expect(events[0]).toMatchObject({ t: 'bell', spender: 'pike', target: 'moss', room: 'sewing_room' });
 
     clearNightlyItemEffects(s);
-    expect(s.bellWatch).toBeNull();
+    expect(s.bellWatches).toEqual([]);
   });
 
   it('announces nothing when no Bell is in play', () => {
     expect(resolveBellWatch(game(), { moss: 'attic' })).toEqual([]);
+  });
+
+  it('refuses to resolve a watch on a child with no midnight position', () => {
+    const s = game();
+    s.held['pike'] = ['bell'];
+    applyItemUses(s, [{ kind: 'bell', spender: 'pike', target: 'moss' }]);
+    expect(() => resolveBellWatch(s, {})).toThrow(/no midnight position/i);
   });
 });
 

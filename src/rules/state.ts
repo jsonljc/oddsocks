@@ -32,6 +32,7 @@ export type PublicEvent =
       outcome: 'caught' | 'cleared' | 'noShow' | 'fizzled' }
   | { t: 'keyhole'; spender: PlayerId; room: RoomId; night: number; occupants: PlayerId[] }
   | { t: 'bell'; spender: PlayerId; target: PlayerId; room: RoomId }
+  | { t: 'bellCast'; spender: PlayerId; target: PlayerId }
   | { t: 'lantern'; spender: PlayerId; room: RoomId }
   | { t: 'eyesOpen'; player: PlayerId; reason: string };
 
@@ -63,10 +64,10 @@ export interface GameState {
   reserve: ItemKind[];
   returning: { item: ItemKind; night: number }[];
 
-  /** Bell spent last morning: this player's midnight room is announced tonight. */
-  bellWatch: PlayerId | null;
-  /** Lantern spent last morning: this room is lit for tonight only. */
-  lanternRoom: RoomId | null;
+  /** Bells spent last morning: each one's target has their midnight room announced tonight. */
+  bellWatches: { spender: PlayerId; target: PlayerId }[];
+  /** Lanterns spent last morning: these rooms are lit for tonight only. */
+  lanternRooms: RoomId[];
 
   activeCall: PostedCall | null;
   over: null | { winner: 'children' | 'oddsocks'; how: 'caught' | 'survived' | 'lightsOut' };
@@ -115,8 +116,8 @@ export function createGame(config: GameConfig, rng: Rng): GameState {
     loose,
     reserve: rng.shuffle(reserve),
     returning: [],
-    bellWatch: null,
-    lanternRoom: null,
+    bellWatches: [],
+    lanternRooms: [],
     activeCall: null,
     over: null,
     history: [],
@@ -126,7 +127,7 @@ export function createGame(config: GameConfig, rng: Rng): GameState {
 /** Common rooms can never go dark. A Lantern relights one bedroom for one night. */
 export function isLit(state: GameState, room: RoomId): boolean {
   if (!isBedroom(state.config.house, room)) return true;
-  if (state.lanternRoom === room) return true;
+  if (state.lanternRooms.includes(room)) return true;
   return state.lit[room] === true;
 }
 
