@@ -18,7 +18,6 @@ describe('config', () => {
   it('defaults to the rulings recorded in the spec', () => {
     expect(DEFAULT_CONFIG.hushMode).toBe('silent');
     expect(DEFAULT_CONFIG.selfSnuffCostsNight).toBe(true);
-    expect(DEFAULT_CONFIG.itemsCanBeDropped).toBe(false);
     expect(DEFAULT_CONFIG.sparrowMode).toBe('dusk');
     expect(DEFAULT_CONFIG.trailRadius).toBe(1);
     expect(DEFAULT_CONFIG.callHandsRequired).toBe(2);
@@ -40,5 +39,11 @@ describe('config', () => {
     expect(c.trailRadius).toBe(2);
     expect(c.callHandsRequired).toBe(2);
     expect(DEFAULT_CONFIG.hushMode).toBe('silent');
+  });
+
+  it('forbids writing through a config', () => {
+    const c = makeConfig();
+    // @ts-expect-error itemCounts is readonly — mutating it would corrupt DEFAULT_CONFIG
+    c.itemCounts.lantern = 999;
   });
 });

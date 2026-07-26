@@ -16,37 +16,36 @@ export type SparrowMode = 'asWritten' | 'dusk';
 
 /** Which rungs of the build are switched on. */
 export interface LayerFlags {
-  items: boolean;
-  oddities: boolean;
-  marking: boolean;
+  readonly items: boolean;
+  readonly oddities: boolean;
+  readonly marking: boolean;
 }
 
 export interface GameConfig {
-  house: House;
-  roster: readonly PlayerId[];
+  readonly house: House;
+  readonly roster: readonly PlayerId[];
 
-  lightsRequired: number;
-  activeNights: number;
-  totalNights: number;
+  readonly lightsRequired: number;
+  readonly activeNights: number;
+  readonly totalNights: number;
 
-  hushMode: HushMode;
-  selfSnuffCostsNight: boolean;
-  sparrowMode: SparrowMode;
+  readonly hushMode: HushMode;
+  readonly selfSnuffCostsNight: boolean;
+  readonly sparrowMode: SparrowMode;
 
   /** Trail names one child within this many hops of the robbed bedroom. */
-  trailRadius: number;
+  readonly trailRadius: number;
 
-  itemCounts: Record<ItemKind, number>;
-  itemsOnMap: number;
-  itemRespawnDelay: number;
-  itemsCanBeDropped: boolean;
-  carryCapacity: number;
-  mossCarryCapacity: number;
+  readonly itemCounts: Readonly<Record<ItemKind, number>>;
+  readonly itemsOnMap: number;
+  readonly itemRespawnDelay: number;
+  readonly carryCapacity: number;
+  readonly mossCarryCapacity: number;
 
-  callHandsRequired: number;
-  maxCallsPerNight: number;
+  readonly callHandsRequired: number;
+  readonly maxCallsPerNight: number;
 
-  layers: LayerFlags;
+  readonly layers: Readonly<LayerFlags>;
 }
 
 export const DEFAULT_CONFIG: GameConfig = {
@@ -66,7 +65,6 @@ export const DEFAULT_CONFIG: GameConfig = {
   itemCounts: { lantern: 2, keyhole: 2, bell: 1 },
   itemsOnMap: 3,
   itemRespawnDelay: 2,
-  itemsCanBeDropped: false,
   carryCapacity: 1,
   mossCarryCapacity: 2,
 
