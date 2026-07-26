@@ -86,7 +86,17 @@ died."* This design treats that as a live hypothesis, not a fallback.
 
 **Ruling:** `hushMode` is config with three values —
 `'silent'` (§4 as written, no self-claims ever again), `'oneNight'` (the fallback), `'none'`
-(disabled, control condition). Plus `selfSnuffCostsNight: boolean`, default `true`.
+(disabled, control condition).
+
+Plus `selfSnuffCostsNight: boolean`, default `true`. When **false**, a villain who snuffs their own
+light gets `activeNights + 1` — the snuff does not spend one of their limited nights, so the
+deadline moves out by one. They own a single bedroom, so this fires at most once per game. That is
+the A/B the exploit needs: it separates "self-snuffing buys claim-immunity" from "self-snuffing
+costs the one spare night," and without it the two are confounded.
+
+The knob must bite in the **game loop**, not in theft resolution. A self-snuff already blocks
+marking structurally — the villain is in one room and has one action — so there is nothing left for
+a rules-level flag to charge. Tempo is the only cost that means anything here.
 
 ### 3.2 Sparrow's oddity is null
 

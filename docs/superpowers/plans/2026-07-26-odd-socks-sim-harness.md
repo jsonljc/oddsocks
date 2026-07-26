@@ -3117,6 +3117,26 @@ describe('playGame', () => {
     }
   });
 
+  it('extends the deadline by one night when a free self-snuff happens', () => {
+    // With selfSnuffCostsNight false, a villain who snuffs their own light does
+    // not spend a night on it, so the game may run one night past totalNights.
+    const c = makeConfig({ selfSnuffCostsNight: false });
+    const overrun = Array.from({ length: 200 }, (_, i) => playGame(c, i, bots))
+      .filter((g) => g.nights.length > c.totalNights);
+    for (const g of overrun) {
+      expect(g.nights.length).toBe(c.totalNights + 1);
+      expect(g.nights.some((n) => n.events.some((e) => e.t === 'selfSnuff'))).toBe(true);
+    }
+  });
+
+  it('never extends the deadline when a self-snuff costs a night', () => {
+    const c = makeConfig();
+    expect(c.selfSnuffCostsNight).toBe(true);
+    for (let seed = 0; seed < 200; seed++) {
+      expect(playGame(c, seed, bots).nights.length).toBeLessThanOrEqual(c.totalNights);
+    }
+  });
+
   it('never leaves a hushed child making a claim under hushMode silent', () => {
     for (let seed = 0; seed < 50; seed++) {
       const g = play(seed);
@@ -3197,7 +3217,13 @@ export function playGame(
     Object.fromEntries(config.roster.map((p) =>
       [p, pick(bots[p]!, knowledgeFor(state, p, sightingLog[p]!, claimLog))]));
 
-  for (let night = 1; night <= config.totalNights; night++) {
+  // A free self-snuff buys the villain tempo, not just cover: when
+  // selfSnuffCostsNight is false, snuffing their own light does not spend one of
+  // their limited nights, so the deadline moves out by one. They own a single
+  // bedroom, so this can happen at most once.
+  let extraNights = 0;
+
+  for (let night = 1; night <= config.totalNights + extraNights; night++) {
     state.night = night;
 
     const dusk = runDusk(state,
@@ -3221,6 +3247,11 @@ export function playGame(
       sightings: midnight.sightings,
       claims: morning.claims,
     });
+
+    if (!config.selfSnuffCostsNight && extraNights === 0 &&
+        midnight.events.some((e) => e.t === 'selfSnuff')) {
+      extraNights = 1;
+    }
 
     if (state.over) break;
     if (darkBedroomCount(state) >= config.lightsRequired) {
