@@ -1126,6 +1126,15 @@ export function resolveMovement(
   const positions: Record<PlayerId, RoomId> = {};
   const steps: Record<PlayerId, [RoomId, RoomId]> = {};
 
+  // Validate both directions: a path for someone who isn't in this phase is
+  // just as wrong as a missing path, and silently dropping it would hand the
+  // caller a result with fewer entries than they submitted.
+  for (const player of Object.keys(paths)) {
+    if (!(player in from)) {
+      throw new Error(`path submitted for a player not in this phase: ${player}`);
+    }
+  }
+
   for (const player of Object.keys(from)) {
     const start = from[player]!;
     const path = paths[player];
