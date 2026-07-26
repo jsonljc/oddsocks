@@ -14,6 +14,12 @@ export function resolveMovement(
   const positions: Record<PlayerId, RoomId> = {};
   const steps: Record<PlayerId, [RoomId, RoomId]> = {};
 
+  for (const player of Object.keys(paths)) {
+    if (!(player in from)) {
+      throw new Error(`path submitted for a player not in this phase: ${player}`);
+    }
+  }
+
   for (const player of Object.keys(from)) {
     const start = from[player]!;
     const path = paths[player];

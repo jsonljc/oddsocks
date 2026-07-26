@@ -31,12 +31,18 @@ describe('resolveMovement', () => {
       { bell: ['west_hall', 'kitchen'] })).toThrow(/no path/i);
   });
 
+  it('throws when a path is submitted for a player not in this phase', () => {
+    expect(() => resolveMovement(H, { bell: 'bed_bell' },
+      { bell: ['west_hall', 'kitchen'], pike: ['kitchen', 'west_hall'] })).toThrow(/path submitted for a player not in this phase/i);
+  });
+
   it('returns exactly one position per player', () => {
     const r = resolveMovement(H,
       { bell: 'bed_bell', pike: 'bed_pike', clem: 'bed_clem' },
       { bell: ['west_hall', 'bed_bell'], pike: ['kitchen', 'west_hall'],
         clem: ['east_hall', 'kitchen'] });
     expect(Object.keys(r.positions).sort()).toEqual(['bell', 'clem', 'pike']);
+    expect(Object.keys(r.steps).sort()).toEqual(['bell', 'clem', 'pike']);
   });
 
   it('cannot end in an adjacent dead-end room', () => {
