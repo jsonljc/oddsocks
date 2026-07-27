@@ -350,6 +350,24 @@ Pure functions with no I/O, so this is a near-perfect fit for test-driven develo
 
 ---
 
+## 9a. A finding that arrived during the build
+
+Recorded here because it is about the game, not the harness, and it should not wait for the sweep.
+
+**The children's "catch" win condition looks practically unreachable against a villain who plays
+rationally.** Across a thousand bot games, a Call caught the villain zero times — and review
+confirmed this is not a coding artifact like the earlier `cleared` bug was. It is §7's dodge working
+exactly as written: the Call is public, the villain sees their own name on it, and they go elsewhere.
+A player who never fails to notice never gets caught.
+
+§1 offers the children two routes — catch them, or survive to dawn. If catching requires a mistake
+that a rational villain does not make, the game has **one** win condition, and the Call's real job is
+the one §7 already claims for it: taking tempo away rather than springing shut.
+
+That may be exactly the intent. But it relocates the sweep's important question. It is not *how often
+do Calls catch* — it is **whether forcing a dodge costs the villain enough to lose the race.** That
+shows up in win rates, not catch rates, and the baseline findings should lead with it.
+
 ## 10. What comes after
 
 Not part of this spec, recorded so the sequencing is visible:
