@@ -507,6 +507,78 @@ describe('solve', () => {
     expect(r.hidingSpace).toEqual([0]);
   });
 
+  // Pike's floor-crossing announcement is Pike speaking (R18), so when the
+  // villain *is* Pike it is the villain speaking — as deniable as Wren's or
+  // Sparrow's private oddities, which `PUBLIC_ODDITIES` already excludes for
+  // exactly that reason. Bell's and Clem's constraints are villain-guarded;
+  // Pike's was not. The A/B below is the announcement's own presence: with the
+  // guard, a Pike villain's chain must be identical whether the house said
+  // anything or not.
+  describe('Pike\'s announcement when the villain owns it', () => {
+    // Everybody spends both nights on the ground floor, so `crossed: false` is
+    // truthful. Night 1 pins the villain to the kitchen outright (a lit witness
+    // names them), which makes night 2's surviving set a clean function of the
+    // transition rule alone.
+    const twoNights = (villain: string, withPikeEvent: boolean): GameRecord => {
+      const speaks = (p: string, room: string, named: string[], night: number) =>
+        ({ t: 'reported' as const, player: p, room, named, others: named.length,
+          lit: true, night });
+
+      const at1: Record<string, string> = {
+        bell: 'kitchen', pike: 'kitchen', moss: 'kitchen',
+        clem: 'bed_clem', wren: 'east_hall', sparrow: 'west_hall',
+      };
+      const at2: Record<string, string> = {
+        bell: 'bed_bell', pike: 'west_hall', moss: 'bed_pike',
+        clem: 'bed_clem', wren: 'east_hall', sparrow: 'kitchen',
+      };
+      // Innocents report where they were and who was with them; the villain
+      // reports the room they claimed, naming nobody (R19).
+      const reportsFor = (at: Record<string, string>, night: number) =>
+        ROSTER.map((p) => p === villain
+          ? speaks(p, at[p]!, [], night)
+          : speaks(p, at[p]!, ROSTER.filter((q) => q !== p && at[q] === at[p]).sort(), night));
+
+      const night = (n: number, at: Record<string, string>, extra: unknown[] = []): NightRecord => ({
+        night: n,
+        duskPositions: { ...at },
+        midnightPositions: { ...at },
+        events: [...reportsFor(at, n), ...extra] as NightRecord['events'],
+        sightings: Object.fromEntries(ROSTER.map((p) => [p, sighting(at[p]!, true, 0)])),
+        claims: { ...at },
+        reporters: [...ROSTER],
+        callPool: [], marked: null,
+      });
+
+      return {
+        seed: 0,
+        config: makeConfig(),
+        villain,
+        nights: [
+          night(1, at1),
+          night(2, at2, withPikeEvent
+            ? [{ t: 'oddity', source: 'pike', detail: 'floorCrossing', payload: { crossed: false } }]
+            : []),
+        ],
+        outcome: { winner: 'children', how: 'survived' },
+      };
+    };
+
+    it('ignores it — the villain would simply have said something else', () => {
+      const withEvent = solve(twoNights('pike', true));
+      const without = solve(twoNights('pike', false));
+      expect(withEvent.hidingSpace).toEqual(without.hidingSpace);
+    });
+
+    it('still applies it when the villain is anybody else', () => {
+      // Non-vacuity: the same announcement, on the same shape of night, really
+      // does cut the chain down when it is an innocent making it.
+      const withEvent = solve(twoNights('moss', true));
+      const without = solve(twoNights('moss', false));
+      expect(withEvent.hidingSpace[1]).toBeLessThan(without.hidingSpace[1]!);
+    });
+  });
+
   it('never breaks the chain solve\'s DP relies on: every true transition is reachable', () => {
     // forcedNight === null is an aggregate signal: a *different, false* room
     // surviving in the DP can satisfy it even if the true room was wrongly

@@ -265,8 +265,14 @@ const padded = (xs: number[], nights: number): number[] =>
  * floors during the walk into this night. `false` pins every transition into this
  * night — including the villain's claim — to same-floor rooms; anything else
  * (the event absent, or `true`) leaves floor changes open.
+ *
+ * Skipped outright when the villain **is** Pike. R18 rules these announcements
+ * the child's own voice, not the house's, and a villain does not testify against
+ * themselves — the same reason `PUBLIC_ODDITIES` excludes Wren's and Sparrow's
+ * as deniable, and the same guard Bell's and Clem's constraints already carry.
  */
-function floorChangeAllowed(arrival: NightRecord): boolean {
+function floorChangeAllowed(record: GameRecord, arrival: NightRecord): boolean {
+  if (record.villain === 'pike') return true;
   for (const e of arrival.events) {
     if (e.t === 'oddity' && e.source === 'pike' && e.detail === 'floorCrossing') {
       return (e.payload as Record<string, unknown>)['crossed'] !== false;
@@ -280,9 +286,14 @@ function floorChangeAllowed(arrival: NightRecord): boolean {
  * villain's claim from `from` to `to`: an exactly-four-edge walk and, if Pike
  * reported nobody crossed floors that night, the same floor throughout.
  */
-function canTransition(house: House, from: RoomId, to: RoomId, arrival: NightRecord): boolean {
+function canTransition(
+  record: GameRecord, from: RoomId, to: RoomId, arrival: NightRecord,
+): boolean {
+  const house = record.config.house;
   if (!reachableInFourHops(house, from, to)) return false;
-  if (floorOf(house, from) !== floorOf(house, to) && !floorChangeAllowed(arrival)) return false;
+  if (floorOf(house, from) !== floorOf(house, to) && !floorChangeAllowed(record, arrival)) {
+    return false;
+  }
   return true;
 }
 
@@ -305,7 +316,7 @@ export function solve(record: GameRecord): { forcedNight: number | null; hidingS
   if (nights > 0) {
     const start = bedroomOf(house, record.villain);
     const arrival = record.nights[0]!;
-    viable[0] = viable[0]!.filter((room) => canTransition(house, start, room, arrival));
+    viable[0] = viable[0]!.filter((room) => canTransition(record, start, room, arrival));
   }
 
   // An empty night-1 set is already a forced contradiction, before the forward
@@ -323,7 +334,7 @@ export function solve(record: GameRecord): { forcedNight: number | null; hidingS
     const next = new Set<RoomId>();
     for (const room of viable[i]!) {
       for (const prev of reachable) {
-        if (canTransition(house, prev, room, arrival)) { next.add(room); break; }
+        if (canTransition(record, prev, room, arrival)) { next.add(room); break; }
       }
     }
     forward.push(new Set(next));
@@ -338,7 +349,7 @@ export function solve(record: GameRecord): { forcedNight: number | null; hidingS
   for (let i = nights - 2; i >= 0; i--) {
     const arrival = record.nights[i + 1]!;
     const survivors = [...forward[i]!].filter((room) =>
-      [...forward[i + 1]!].some((nxt) => canTransition(house, room, nxt, arrival)));
+      [...forward[i + 1]!].some((nxt) => canTransition(record, room, nxt, arrival)));
     forward[i] = new Set(survivors);
     hidingSpace[i] = survivors.length;
   }
