@@ -85,32 +85,59 @@ so this surface and the instrument agree about what counts as evidence:
 | Rule | A claim of room `R` for night `n` is contradicted when… |
 |---|---|
 | **Witness** | someone reported a **lit** room `S ≠ R` for night `n` and named the claimant in it. |
-| **Anti-witness** | someone reported the **lit** room `R` for night `n` and did *not* name the claimant. A lit room hides nobody. |
+| **Anti-witness** | someone reported the **lit** room `R` for night `n`, **named at least one other person**, and did not name the claimant. A lit room hides nobody. |
 
 Dark-room reports never flag anything. A dark room names nobody, which is the whole reason
 it is worth sleeping in.
 
-### 3.4 Flags are mutual, and sometimes point at the innocent
+### 3.4 A flag never fires on a truthful claim
 
-**This is the design's one load-bearing judgement call.**
+**This is the design's one load-bearing property, and it is measured rather than argued.**
 
-A flag means *these two public statements cannot both be true*. It never means *this person
-lied*, and the rendering must not imply otherwise.
+The anti-witness rule's "named at least one other person" clause is the whole of it. An
+earlier draft of this spec omitted it and defended the result as the productive ambiguity a
+real table lives with. Applying both rules to 2,000 real games says otherwise:
 
-This matters because of R19. The villain's public report carries the room they **claimed**,
-naming nobody. So a villain who lies about the kitchen produces a report that contradicts
-every innocent who truthfully claims the kitchen — and is contradicted right back by
-theirs. Both cells light up. Neither the surface nor the player can tell which end is
-rotten.
+| anti-witness rule | flags/game | share landing on the villain | villain caught out |
+|---|---|---|---|
+| fires regardless (the earlier draft) | 1.49 | 66.1% | 83.5% of games |
+| **requires a named witness** | **0.83** | **100.0%** | 77.5% of games |
 
-That is correct, not a defect. It is precisely the standoff a real table reaches when two
-people contradict each other, and untangling it is the game. The alternative — suppressing
-any flag whose conflicting report could itself be fabricated — suppresses nearly all of
-them, because any report can be the villain's.
+Chance is 16.7%. The columns that matter are the last two: the loose rule adds half a flag
+per game, every one of which lands on an innocent, and catches the villain in **not one
+additional game**. The ambiguity it produces carries no information. It was noise defended
+as texture.
 
-The consequence to accept: **the record will sometimes point at innocents.** A player who
-reads a flag as an accusation will be misled by it. The rendering carries the burden of
-saying "these disagree," never "this one is lying."
+The reason is R19. The villain's public report carries the room they *claimed* and names
+nobody, so under the loose rule it contradicts every innocent who truthfully claims that
+same room. Excluding the villain's report directly is not available — the record cannot
+know who the villain is — but requiring the reporter to have named somebody excludes it
+without identifying it, and stands on its own terms: *"I was in a lit room and saw Pike"*
+demonstrates observation, while *"I was in a lit room and saw nobody"* is equally
+consistent with never having been there.
+
+The resulting property is structural, not statistical. R14 makes every innocent bot claim
+its true room; neither narrowed rule can contradict a true claim. The 100% is therefore a
+consequence of the rules, and the guarantee to state precisely is **"a flag never fires on
+a truthful claim"** — a human child who lies would be flagged, correctly.
+
+The price is six points of detection (83.5% → 77.5%), paid for a surface that never
+misleads. In a session whose purpose is deciding whether this game is legible, a tool the
+player must learn to distrust is worse than one that occasionally stays quiet.
+
+### 3.4a Rendering: a list, not marks on the grid
+
+At 0.83 flags a game, a contradiction is a rare event, not a field to shade. Flags are
+therefore rendered as an explicit list beneath the grid, each naming both statements:
+
+```
+  night 3   bell claims kitchen
+            pike reports kitchen, lit, names clem and moss
+```
+
+A mark on a grid cell cannot say *which* two statements collided, which is the only thing
+the player can act on, and it reads as an accusation whatever the legend says. The grid
+stays for scanning a player across nights; collisions are their own section.
 
 ### 3.5 Deliberately excluded
 
@@ -139,7 +166,16 @@ bedroom therefore reports `lit: false` where every truthful occupant of that roo
 That is a one-bit villain detector, and it is exactly the class of leak R19 exists to close.
 It would surface through §3.3's rules in the first session that spends a Lantern.
 
-**Fix:** the villain's report must read `lit` from the same moment everyone else's does.
+**Fix:** snapshot `state.lanternRooms` at the top of `runMorning`, before
+`clearNightlyItemEffects`, and have the villain's branch of `reportOf` compute `lit` against
+the snapshot rather than against live state.
+
+**The obvious alternative is wrong and must not be taken.** Moving
+`clearNightlyItemEffects` to after the report loop looks like the tidier fix and silently
+breaks both item effects: `applyItemUses` runs *inside* that loop (`night.ts:198`) and
+pushes the lanterns and bell watches just spent, so a clear placed after it wipes them.
+Lanterns and Bells would stop working and no existing test would notice, because neither has
+ever fired. The clear must stay where it is.
 
 **No sweep number can move.** Across all 24,000 games the Lantern fired zero times (Limit 6),
 so no swept game has ever had a lantern-lit room for this to disagree about. The fix is
@@ -183,14 +219,19 @@ render is unchanged.
 
 - the grid renders a claim per player per night, with `—` for a Hushed claim
 - **witness**: a lit report naming someone elsewhere flags their claim
-- **anti-witness**: a lit report from the claimed room that omits them flags their claim
+- **anti-witness**: a lit report from the claimed room that names someone else and omits
+  them flags their claim
+- **the §3.4 property**: a report from the claimed room that names *nobody* flags nothing —
+  asserted with a villain's R19 report colliding with an innocent's true claim, which is the
+  exact shape that produced 0.5 false flags a game in the earlier draft
 - a **dark**-room report flags nothing, under either rule
-- **mutual flagging**: a villain's R19 report colliding with an innocent's true claim flags
-  both cells — the §3.4 case, asserted directly rather than left as prose
+- a collision renders both statements, not a mark (§3.4a)
 - the render ignores ground truth (the §5 boundary check)
 
 For §4, a test that a villain claiming a lantern-lit bedroom reports `lit: true`, matching
-the occupants — and which fails against the current ordering.
+the occupants — and which fails against the current ordering. Plus a regression test that a
+Lantern spent this morning is still lighting its room tonight, which is what the wrong fix
+would break.
 
 ---
 
@@ -209,3 +250,29 @@ texture. It is not evidence that the game works, because the morning — the hal
 people argue — remains unbuilt and untestable at this fidelity. The honest next question
 after the session is whether the morning is worth building at all, and that is a decision
 this session informs rather than settles.
+
+---
+
+## 9. Blocking gate: reconcile against v10 §9
+
+**This spec is not cleared for implementation.**
+
+The v10.0 rules document is not in this repository and has not been read by the author of
+this design. Its §9 describes a **morning discussion board**, and this spec's central
+justification — that the Record approximates a component the real game already has — is an
+assertion about a document nobody here has opened.
+
+Three things have to be checked before a line is written:
+
+1. **Does §9's board already specify what players may see?** If so, the Record implements it
+   rather than inventing it, and its contents follow from the rules instead of from §3.2.
+2. **Does the board show contradictions?** If the rules already say how a disagreement is
+   surfaced at the table, §3.3 and §3.4 must match that and not a rule invented here.
+3. **Does §9 bound what a player may write down?** The four-utterance budget suggests the
+   design cares about limiting what gets said. If it also limits what gets *recorded*, an
+   unlimited perfect record contradicts the design's intent, and the whole surface needs
+   rescoping.
+
+If the board turns out to specify something incompatible, the correct response is to change
+this spec, not the rules. The measured results in §3.4 survive either way — they are facts
+about the engine's evidence, not about the interface.
