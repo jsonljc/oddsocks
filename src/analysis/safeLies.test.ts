@@ -64,6 +64,64 @@ describe('viableRoomsAt', () => {
     expect(viableRoomsAt(g, 2)).not.toContain(night.midnightPositions[occupied]);
   });
 
+  it('keeps a range of viable rooms when the only witness to the villain is Hushed', () => {
+    // Bell truly shares the lit kitchen with the villain, moss — the exact
+    // fact pattern that collapses the space to one truth in the seed-driven
+    // test above. But Bell was Hushed and so neither claims nor reports: no
+    // 'reported' event names them, and they are absent from `reporters`.
+    // Nobody else's testimony touches moss at all. This is the scenario Task
+    // 17 exists to fix: a witness's sighting is true but was never made
+    // public, so it must not pin the villain the way a real report would.
+    const night: NightRecord = {
+      night: 1,
+      duskPositions: {
+        bell: 'kitchen', pike: 'bed_pike', clem: 'bed_clem',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'kitchen',
+      },
+      midnightPositions: {
+        bell: 'kitchen', pike: 'bed_pike', clem: 'bed_clem',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'kitchen',
+      },
+      events: [
+        { t: 'reported', player: 'pike', room: 'bed_pike', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'moss', room: 'kitchen', named: ['bell'], others: 1, lit: true },
+        // No 'reported' event for bell — the Hush silenced them.
+      ],
+      sightings: {
+        // Bell's sighting is true — they really did see moss — but it never
+        // became public. `night.reporters` (below) is where that shows up.
+        bell: sighting('kitchen', true, 1, ['moss']),
+        pike: sighting('bed_pike', true, 0),
+        clem: sighting('bed_clem', true, 0),
+        wren: sighting('bed_wren', true, 0),
+        sparrow: sighting('bed_sparrow', true, 0),
+        moss: sighting('kitchen', true, 1, ['bell']),
+      },
+      claims: {
+        bell: null, pike: 'bed_pike', clem: 'bed_clem',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'kitchen',
+      },
+      reporters: ['pike', 'clem', 'wren', 'sparrow', 'moss'],
+    };
+
+    const record: GameRecord = {
+      seed: 0,
+      config: makeConfig(),
+      villain: 'moss',
+      nights: [night],
+      outcome: { winner: 'children', how: 'survived' },
+    };
+
+    const truth = night.midnightPositions['moss'];
+    const result = viableRoomsAt(record, 1);
+    expect(result).toContain(truth);
+    expect(result).not.toEqual([truth]);
+    expect(result.length).toBeGreaterThan(1);
+  });
+
   it('does not refute Clem\'s room over an item count a live Call could explain away', () => {
     // A live Call spends items from anonymous hands — callResolved carries only a
     // count, never who paid — so the villain could have spent their dusk pickup

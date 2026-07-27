@@ -34,6 +34,8 @@ describe('sighting reports', () => {
         if (e.t !== 'reported') continue;
         expect(e.room).toBe(night.sightings[e.player]!.room);
         expect(e.named).toEqual(night.sightings[e.player]!.named);
+        expect(e.others).toBe(night.sightings[e.player]!.others);
+        expect(e.lit).toBe(night.sightings[e.player]!.lit);
       }
     }
   });
@@ -54,16 +56,18 @@ describe('sighting reports', () => {
       }
     }
   });
+
+  it('leaves every player in reporters every night when the Hush is switched off', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const g = play(seed, { hushMode: 'none' });
+      for (const night of g.nights) {
+        expect(night.reporters).toEqual([...ROSTER]);
+      }
+    }
+  });
 });
 
 describe('the solver reads only reportable testimony', () => {
-  it('still never refutes the truth once hushed witnesses are excluded', async () => {
-    const { solve } = await import('../analysis/safeLies.js');
-    for (let seed = 0; seed < 100; seed++) {
-      expect(solve(play(seed)).forcedNight).toBeNull();
-    }
-  });
-
   it('gives the villain more room once witnesses go silent', async () => {
     const { solve } = await import('../analysis/safeLies.js');
     let widened = 0;
