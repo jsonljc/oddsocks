@@ -47,6 +47,59 @@ export function reachableInFourHops(house: House, from: RoomId, to: RoomId): boo
   return fourHopFrontier(house, from).has(to);
 }
 
+/** Every `reported` event of one night that counts as third-party testimony:
+ *  the villain's own is never evidence against themselves, and under R18 its
+ *  room is their claim, which may be a lie. */
+const testimonyOf = (record: GameRecord, n: NightRecord) => n.events
+  .filter((e): e is Extract<PublicEvent, { t: 'reported' }> => e.t === 'reported')
+  .filter((rep) => rep.player !== record.villain);
+
+/**
+ * The room the *children* can actually establish for `player` on `night`, or
+ * `null` when it is genuinely unknown.
+ *
+ * This is the whole point of the Hush, and the solver has to respect it as
+ * strictly as the dark-room census does: a Hushed child can neither say where
+ * they slept nor report what they saw, so unless somebody else placed them,
+ * nobody at the table knows where they were. Reading `midnightPositions`
+ * instead hands the children omniscience and lets an oddity refute rooms the
+ * real table could never rule out.
+ *
+ * Four public channels can place a child, all of them truthful: their own claim
+ * (innocents claim honestly, R14), a lit-room witness naming them, a spent Bell
+ * announcing their midnight room, or a Keyhole revealing a past night's
+ * occupants. Only ever ask this about an innocent — the villain's claim is
+ * exactly the thing under test, and taking it at face value would beg the
+ * question.
+ */
+export function knownRoomOf(
+  record: GameRecord, night: number, player: PlayerId,
+): RoomId | null {
+  const n = record.nights[night - 1];
+  if (!n) return null;
+
+  const claimed = n.claims[player];
+  if (claimed) return claimed;
+
+  for (const rep of testimonyOf(record, n)) {
+    if (rep.lit && rep.named.includes(player)) return rep.room;
+  }
+
+  for (const e of n.events) {
+    if (e.t === 'bell' && e.target === player) return e.room;
+  }
+
+  // A Keyhole is spent on a night strictly later than the one it reveals, so
+  // its event lives in that later night's record — scan them all.
+  for (const later of record.nights) {
+    for (const e of later.events) {
+      if (e.t === 'keyhole' && e.night === night && e.occupants.includes(player)) return e.room;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Every room the villain could have claimed on this night without contradicting a
  * hard fact. Ignores the night-to-night chain — `solve` handles that.
@@ -66,9 +119,7 @@ export function viableRoomsAt(record: GameRecord, night: number): RoomId[] {
   // villain's own report is excluded too: it is never third-party testimony
   // against themselves (a lit self-report can never name oneself, so it would
   // otherwise look, wrongly, like a witness who failed to spot the villain).
-  const reports = n.events
-    .filter((e): e is Extract<PublicEvent, { t: 'reported' }> => e.t === 'reported')
-    .filter((rep) => rep.player !== villain);
+  const reports = testimonyOf(record, n);
 
   // A lit-room witness names everyone present. If one named the villain, the
   // claim is pinned; if one was somewhere else and did not, that room is refuted.
@@ -120,15 +171,17 @@ export function viableRoomsAt(record: GameRecord, night: number): RoomId[] {
   }
 
   // Public oddities only — private ones are deniable, so they prove nothing.
-  candidates = candidates.filter((r) => publicOdditiesAllow(record, n, r));
+  candidates = candidates.filter((r) => publicOdditiesAllow(record, night, r));
 
   // A theft is a light going out in a room the villain was standing in, and a
   // dark room can hold a lie. Nothing further to enforce here.
   return candidates.sort();
 }
 
-function publicOdditiesAllow(record: GameRecord, n: NightRecord, claim: RoomId): boolean {
+function publicOdditiesAllow(record: GameRecord, night: number, claim: RoomId): boolean {
   if (!record.config.layers.oddities) return true;
+  const n = record.nights[night - 1];
+  if (!n) return true;
   const house = record.config.house;
   const villain = record.villain;
   const innocents = others(record);
@@ -143,17 +196,36 @@ function publicOdditiesAllow(record: GameRecord, n: NightRecord, claim: RoomId):
     const payload = e.payload as Record<string, unknown>;
 
     if (e.source === 'bell' && e.detail === 'adjacentCount' && villain !== 'bell') {
-      const bellRoom = n.midnightPositions['bell'];
-      if (!bellRoom) continue;
+      const count = payload['count'];
+      const bellRoom = knownRoomOf(record, night, 'bell');
+      if (!bellRoom || typeof count !== 'number') continue;
+
+      // Exact arithmetic is only available to someone who knows where everyone
+      // stood, and after four or five thefts the children know no such thing.
+      // Split the others into the ones they can place and the ones they cannot,
+      // and test the announcement for *containment*: every unplaceable child
+      // might or might not have been beside Bell, so the count they can account
+      // for is a range, not a number. Tightening this back to equality reads
+      // Hushed children's true positions off the record and refutes rooms the
+      // table could never have ruled out.
       const beside = new Set(doorsOf(house, bellRoom));
-      const fromInnocents = innocents
-        .filter((p) => p !== 'bell' && beside.has(n.midnightPositions[p]!)).length;
-      const implied = fromInnocents + (beside.has(claim) ? 1 : 0);
-      if (implied !== payload['count']) return false;
+      let knownBeside = 0;
+      let unplaceable = 0;
+      for (const p of innocents) {
+        if (p === 'bell') continue;
+        const room = knownRoomOf(record, night, p);
+        if (room === null) unplaceable++;
+        else if (beside.has(room)) knownBeside++;
+      }
+
+      const low = knownBeside + (beside.has(claim) ? 1 : 0);
+      if (count < low || count > low + unplaceable) return false;
     }
 
     if (e.source === 'clem' && e.detail === 'itemHolders' && villain !== 'clem') {
-      const clemRoom = n.midnightPositions['clem'];
+      // Same rule as Bell's: the tally only says anything about the villain if
+      // the children can say which room it was taken in.
+      const clemRoom = knownRoomOf(record, night, 'clem');
       if (!clemRoom || claim !== clemRoom) continue;
 
       // The solver can only ever bound the villain's holdings, never know them

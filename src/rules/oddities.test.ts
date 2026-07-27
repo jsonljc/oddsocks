@@ -53,6 +53,43 @@ describe('public oddities', () => {
   });
 });
 
+describe('the Hush', () => {
+  // Bell, Pike and Clem all end midnight somewhere that would normally make
+  // them speak: Bell has neighbours to count, Pike has a walk to describe, Clem
+  // has company to look at.
+  const speaking = ctx({
+    startPositions: { bell: 'bed_bell', pike: 'bed_pike', clem: 'bed_clem' },
+    midnightPositions: { bell: 'west_hall', pike: 'kitchen', clem: 'kitchen' },
+    duskSteps: { pike: ['west_hall', 'kitchen'] },
+    midnightSteps: { pike: ['west_hall', 'kitchen'] },
+  });
+
+  it('takes the announcement away from whichever child was snuffed', () => {
+    for (const silenced of ['bell', 'pike', 'clem']) {
+      const s = game();
+      s.hushedSince[silenced] = 2;
+      const events = resolveOddities(s, speaking);
+      expect(find(events, silenced)).toBeUndefined();
+      for (const other of ['bell', 'pike', 'clem'].filter((p) => p !== silenced)) {
+        expect(find(events, other)).toBeDefined();
+      }
+    }
+  });
+
+  it('gives the announcement back the next night under hushMode oneNight', () => {
+    const oneNight = makeConfig({ hushMode: 'oneNight' });
+    const s = createGame(oneNight, makeRng(1));
+    s.villain = 'moss';
+    s.hushedSince['bell'] = 3;
+
+    s.night = 3;
+    expect(find(resolveOddities(s, speaking), 'bell')).toBeUndefined();
+
+    s.night = 4;
+    expect(find(resolveOddities(s, speaking), 'bell')!.payload['count']).toBe(2);
+  });
+});
+
 describe('private oddities', () => {
   it('announces Wren in the attic, publicly, whichever phase it was', () => {
     const s = game();

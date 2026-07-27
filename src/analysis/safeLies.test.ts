@@ -4,7 +4,7 @@ import { playGame } from '../rules/game.js';
 import { randomBot } from '../bots/random.js';
 import { HOLLOW_HOUSE } from '../rules/houses/hollow.js';
 import { bedroomOf } from '../rules/map.js';
-import { viableRoomsAt, solve, reachableInFourHops } from './safeLies.js';
+import { viableRoomsAt, solve, reachableInFourHops, knownRoomOf } from './safeLies.js';
 import type { GameRecord } from '../rules/game.js';
 import type { NightRecord, Sighting } from '../rules/state.js';
 
@@ -14,6 +14,22 @@ const play = (seed: number): GameRecord => playGame(makeConfig(), seed, bots);
 /** A lit or dark sighting, matching `sightingsAt`'s shape, for hand-built fixtures. */
 const sighting = (room: string, lit: boolean, others: number, named: string[] = []): Sighting =>
   ({ room, named, others, lit });
+
+/** A night nobody learned anything from: everyone home, lit, and reporting. Used
+ *  to pad a fixture out to the night it actually cares about, so the record's
+ *  night numbers and its array indices agree the way a real game's do. */
+const quietNight = (night: number): NightRecord => ({
+  night,
+  duskPositions: Object.fromEntries(ROSTER.map((p) => [p, `bed_${p}`])),
+  midnightPositions: Object.fromEntries(ROSTER.map((p) => [p, `bed_${p}`])),
+  events: ROSTER.map((p) => ({
+    t: 'reported' as const, player: p, room: `bed_${p}`,
+    named: [] as string[], others: 0, lit: true, night,
+  })),
+  sightings: Object.fromEntries(ROSTER.map((p) => [p, sighting(`bed_${p}`, true, 0)])),
+  claims: Object.fromEntries(ROSTER.map((p) => [p, `bed_${p}`])),
+  reporters: [...ROSTER],
+});
 
 describe('reachableInFourHops', () => {
   it('cannot enter a dead-end bedroom whose one door cannot make a three-edge round trip', () => {
@@ -25,6 +41,78 @@ describe('reachableInFourHops', () => {
 
   it('enters a dead-end bedroom whose neighbour can make the three-edge round trip', () => {
     expect(reachableInFourHops(HOLLOW_HOUSE, 'west_hall', 'bed_bell')).toBe(true);
+  });
+});
+
+describe('knownRoomOf', () => {
+  // Night 2 of a two-night record. Four different ways the children can (or
+  // cannot) place a child who is not the villain, side by side.
+  const night2: NightRecord = {
+    night: 2,
+    duskPositions: {
+      bell: 'kitchen', pike: 'kitchen', clem: 'bed_clem',
+      wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+    },
+    midnightPositions: {
+      bell: 'kitchen', pike: 'kitchen', clem: 'bed_clem',
+      wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+    },
+    events: [
+      { t: 'reported', player: 'bell', room: 'kitchen', named: ['pike'], others: 1, lit: true, night: 2 },
+      { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 2 },
+      { t: 'reported', player: 'moss', room: 'attic', named: [], others: 0, lit: true, night: 2 },
+      // A spent Bell item names one child's true midnight room out loud.
+      { t: 'bell', spender: 'wren', target: 'clem', room: 'bed_clem' },
+    ],
+    sightings: {
+      bell: sighting('kitchen', true, 1, ['pike']),
+      pike: sighting('kitchen', true, 1, ['bell']),
+      clem: sighting('bed_clem', true, 0),
+      wren: sighting('bed_wren', true, 0),
+      sparrow: sighting('bed_sparrow', true, 0),
+      moss: sighting('attic', true, 0),
+    },
+    // pike, clem and sparrow have all been Hushed: no claim, no report.
+    claims: {
+      bell: 'kitchen', pike: null, clem: null,
+      wren: 'bed_wren', sparrow: null, moss: 'attic',
+    },
+    reporters: ['bell', 'wren', 'moss'],
+  };
+
+  const record: GameRecord = {
+    seed: 0,
+    config: makeConfig(),
+    villain: 'moss',
+    nights: [quietNight(1), night2],
+    outcome: { winner: 'children', how: 'survived' },
+  };
+
+  it('takes a child at their word when the Hush let them claim', () => {
+    expect(knownRoomOf(record, 2, 'bell')).toBe('kitchen');
+  });
+
+  it('places a Hushed child a lit witness named', () => {
+    expect(knownRoomOf(record, 2, 'pike')).toBe('kitchen');
+  });
+
+  it('places a Hushed child a spent Bell announced', () => {
+    expect(knownRoomOf(record, 2, 'clem')).toBe('bed_clem');
+  });
+
+  it('places a Hushed child a later Keyhole revealed', () => {
+    const keyholeNight: NightRecord = {
+      ...quietNight(3),
+      events: [
+        { t: 'keyhole', spender: 'wren', room: 'bed_sparrow', night: 2, occupants: ['sparrow'] },
+      ],
+    };
+    const withKeyhole: GameRecord = { ...record, nights: [...record.nights, keyholeNight] };
+    expect(knownRoomOf(withKeyhole, 2, 'sparrow')).toBe('bed_sparrow');
+  });
+
+  it('admits it cannot place a Hushed child nobody saw or announced', () => {
+    expect(knownRoomOf(record, 2, 'sparrow')).toBeNull();
   });
 });
 
@@ -179,6 +267,148 @@ describe('viableRoomsAt', () => {
     // dusk, and no grip touched them — a naive reading (pickedUp=1, count=0)
     // would refute it, but the live Call means holdings aren't provable.
     expect(viableRoomsAt(record, 1)).toContain('bed_clem');
+  });
+
+  // Bell announces how many people stood in the rooms beside them. Working out
+  // what that implies about the villain needs everybody else's position, and
+  // the children only have the ones the Hush left speakable. `bellNight` puts
+  // two of them out of reach: pike and clem were robbed on earlier nights, so
+  // neither claims nor reports, and nobody else's testimony touches them.
+  const bellNight = (over: Partial<NightRecord> = {}): NightRecord => ({
+    night: 3,
+    duskPositions: {
+      bell: 'west_hall', pike: 'kitchen', clem: 'bed_clem',
+      wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'landing',
+    },
+    midnightPositions: {
+      bell: 'west_hall', pike: 'kitchen', clem: 'bed_clem',
+      wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'landing',
+    },
+    events: [
+      // Beside west_hall: kitchen, bed_bell, bed_pike, landing. pike (kitchen)
+      // and moss (landing) are the two the house counts.
+      { t: 'oddity', source: 'bell', detail: 'adjacentCount', payload: { count: 2 } },
+      { t: 'reported', player: 'bell', room: 'west_hall', named: [], others: 0, lit: true, night: 3 },
+      { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 3 },
+      { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 3 },
+      // The villain reports the room they claimed, naming nobody (see R18).
+      { t: 'reported', player: 'moss', room: 'attic', named: [], others: 0, lit: true, night: 3 },
+    ],
+    sightings: {
+      bell: sighting('west_hall', true, 0),
+      pike: sighting('kitchen', true, 0),
+      clem: sighting('bed_clem', false, 0),
+      wren: sighting('bed_wren', true, 0),
+      sparrow: sighting('bed_sparrow', true, 0),
+      moss: sighting('landing', true, 0),
+    },
+    claims: {
+      bell: 'west_hall', pike: null, clem: null,
+      wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+    },
+    reporters: ['bell', 'wren', 'sparrow', 'moss'],
+    ...over,
+  });
+
+  const bellRecord = (night: NightRecord): GameRecord => ({
+    seed: 0,
+    config: makeConfig(),
+    villain: 'moss',
+    nights: [quietNight(1), quietNight(2), night],
+    outcome: { winner: 'children', how: 'survived' },
+  });
+
+  it('reads Bell\'s count as an interval when Hushed children cannot be placed', () => {
+    // The children can place only wren and sparrow, neither beside Bell, so the
+    // announced 2 is equally consistent with the villain standing beside Bell
+    // (and both Hushed children elsewhere) or nowhere near (and both Hushed
+    // children beside Bell). `attic` therefore survives. Demanding exact
+    // equality against everyone's *true* midnight room refutes it — which is
+    // the solver spending knowledge the table never had.
+    const result = viableRoomsAt(bellRecord(bellNight()), 3);
+    expect(result).toContain('landing'); // the truth, always
+    expect(result).toContain('attic');
+  });
+
+  it('still refutes a claim Bell\'s count cannot reach even at the top of the interval', () => {
+    // Same shape, but clem is beside Bell too (bed_pike) and pike can speak, so
+    // exactly one child is unplaceable. Beside Bell: pike (kitchen, known),
+    // clem (bed_pike, unknown), moss. Three announced, at most two accounted
+    // for without the villain — so the villain must be one of them, and every
+    // room that is not beside west_hall is out.
+    const night = bellNight({
+      duskPositions: {
+        bell: 'west_hall', pike: 'kitchen', clem: 'bed_pike',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'landing',
+      },
+      midnightPositions: {
+        bell: 'west_hall', pike: 'kitchen', clem: 'bed_pike',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'landing',
+      },
+      events: [
+        { t: 'oddity', source: 'bell', detail: 'adjacentCount', payload: { count: 3 } },
+        { t: 'reported', player: 'bell', room: 'west_hall', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'pike', room: 'kitchen', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'moss', room: 'attic', named: [], others: 0, lit: true, night: 3 },
+      ],
+      claims: {
+        bell: 'west_hall', pike: 'kitchen', clem: null,
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+      },
+      reporters: ['bell', 'pike', 'wren', 'sparrow', 'moss'],
+    });
+
+    const result = viableRoomsAt(bellRecord(night), 3);
+    expect(result).toContain('landing'); // the truth, always
+    expect(result).not.toContain('attic');
+    expect(result).not.toContain('east_hall');
+  });
+
+  it('does not use Clem\'s count when the children cannot place Clem', () => {
+    // Clem is Hushed, so the tally is about a room nobody can locate. The
+    // villain picked something up at dusk and claims bed_clem; a solver reading
+    // Clem's true room off the record refutes that claim on `count: 0`, using a
+    // fact the children never had. (The engine now silences a Hushed child's
+    // oddity as well — see R18 — so this exact record cannot arise from a real
+    // game; the solver must not depend on that gate being the only guard.)
+    const night: NightRecord = {
+      night: 3,
+      duskPositions: {
+        bell: 'bed_bell', pike: 'bed_pike', clem: 'kitchen',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+      },
+      midnightPositions: {
+        bell: 'bed_bell', pike: 'bed_pike', clem: 'kitchen',
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+      },
+      events: [
+        { t: 'itemTaken', player: 'moss', item: 'lantern', room: 'sewing_room' },
+        { t: 'oddity', source: 'clem', detail: 'itemHolders', payload: { count: 0 } },
+        { t: 'reported', player: 'bell', room: 'bed_bell', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 3 },
+        { t: 'reported', player: 'moss', room: 'attic', named: [], others: 0, lit: true, night: 3 },
+      ],
+      sightings: {
+        bell: sighting('bed_bell', true, 0),
+        pike: sighting('bed_pike', false, 0),
+        clem: sighting('kitchen', true, 0),
+        wren: sighting('bed_wren', true, 0),
+        sparrow: sighting('bed_sparrow', true, 0),
+        moss: sighting('attic', true, 0),
+      },
+      claims: {
+        bell: 'bed_bell', pike: null, clem: null,
+        wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
+      },
+      reporters: ['bell', 'wren', 'sparrow', 'moss'],
+    };
+
+    const result = viableRoomsAt(bellRecord(night), 3);
+    expect(result).toContain('attic'); // the truth, always
+    expect(result).toContain('kitchen');
   });
 });
 

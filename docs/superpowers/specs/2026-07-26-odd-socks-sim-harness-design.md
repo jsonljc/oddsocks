@@ -163,6 +163,8 @@ v10.0 does not answer these. Each is decided here explicitly.
 | R15 | Sighting reports | All innocents report all their sightings truthfully. The four-utterance budget of §9 is **not** modelled — build one assumes unlimited reporting, which makes results an upper bound on available signal. |
 | R16 | Trail on a self-snuff | **No trail.** §4 describes the trail as what a *theft* leaves behind, and snuffing your own light is a theft against nobody. Emitting one would hand the children a free people-fact for an action that costs the villain nothing. |
 | R17 | Who may report | The Hush removes both halves of §4 — a snuffed child can neither claim where they slept nor report what they saw. Testimony from a Hushed child is therefore not public and may not be used as evidence. |
+| R18 | Whose voice is an oddity announcement | Bell's count, Pike's stair-count and Clem's tally are **the child speaking**, not the house, so R17 silences them exactly as it silences a claim or a report. Wren's attic tell and Sparrow's floor are untouched: the first is something others notice *about* Wren, the second is private and never public evidence. |
+| R19 | What the villain reports | The villain's public report carries **the room they claimed**, never the room they were in, and names nobody (`named: []`, `others: 0`). R15's honesty rule is scoped to innocents; applying it to the villain published their true room every morning. Excluding them from the report loop instead is not available: on night one nobody is Hushed, so the single child with no report would be the villain outright. Build one models no *content* to a villain's testimony — `MorningAction` has no "what I saw" field and inventing one needs the liar AI §6.1 exists to avoid — so the villain says where they slept and stops there. |
 
 R15 is the most consequential simplification and must be repeated wherever results are quoted.
 
@@ -249,8 +251,15 @@ A room `C` is **viable** for the villain at night `n` if it survives every const
 | **Keyhole** | A Keyhole on `(room, night m)` reveals true occupants — it retroactively pins or forbids the night-`m` claim. |
 | **Bell** | A Bell naming the villain for night `n` announces their true room, so `C` must equal it. |
 | **Pike** | If Pike announced no floor crossing, a claim chain that changes floor is refuted. |
-| **Bell's count** | Rooms adjacent to Bell's midnight room held *x* people. Given innocents' true positions, the villain's claim must make the arithmetic work. |
-| **Clem's count** | Item-holding is public (pickups are announced), so a claim placing an item-holding villain in Clem's room must match Clem's announced tally. |
+| **Bell's count** | Rooms adjacent to Bell's midnight room held *x* people. The children can place only the innocents somebody publicly located, so *x* must **fall between** the number of those they can put beside Bell (plus the villain's claim, when it is beside Bell) and that same number plus the innocents nobody can place at all. Exact equality would spend Hushed children's true positions — knowledge the table does not have. |
+| **Clem's count** | Item-holding is public (pickups are announced), so a claim placing an item-holding villain in Clem's room must match Clem's announced tally — but only on a night the children can establish which room Clem was in. |
+
+Both of the last two, and the dark-room census above them, run on **`knownRoomOf`**: the room the
+children can actually establish for a child — their own claim, a lit witness naming them, a spent
+Bell, or a Keyhole — and `null` otherwise. Nothing in the solver may read `midnightPositions` for
+anyone but the villain whose claim is under test. Four or five of six players are Hushed by night
+five; a constraint that quietly consults ground truth for them refutes rooms the real table could
+never rule out, and every such refutation inflates the exposure this instrument exists to measure.
 
 Two outputs:
 
