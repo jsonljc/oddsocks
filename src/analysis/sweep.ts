@@ -16,8 +16,30 @@ export interface SweepResult {
   villainWinRate: number;
   caughtRate: number;
   survivedRate: number;
+  /** Mean theft-type events (incl. self-snuffs) per game — the villain's raw tempo. */
+  meanThefts: number;
+  /** Share of games in which the villain's theft count reached its full quota
+   *  (config.lightsRequired). Not identical to villainWinRate: a self-snuff
+   *  counts here but does not by itself satisfy the win condition. */
+  fullQuotaRate: number;
+  /**
+   * `neverForcedRate`/`medianForcedNight` are a structural property of the
+   * solver's truth-preservation invariant, not a per-config measurement — the
+   * villain's true claim history is always internally consistent, so
+   * `forcedNight` is null for every game, in every config (see
+   * safeLies.test.ts, "never reports a forced contradiction"). Kept because
+   * they are still exact, real values (never wrong to report), but they
+   * cannot discriminate one config from another. Read `collapseRate` /
+   * `medianCollapseNight` below for the signal this looks like it should be.
+   */
   neverForcedRate: number;
   medianForcedNight: number | null;
+  /** Share of games in which the viable set ever narrows to exactly one room —
+   *  which, by truth-preservation, can only be the villain's true room. This is
+   *  the real "is the villain's cover ever blown down to a confession" signal. */
+  collapseRate: number;
+  /** Median night of the first such collapse, among games where it happens. */
+  medianCollapseNight: number | null;
   meanHidingSpace: number;
   trailAccuracy: number;
   callsPostedPerGame: number;
@@ -25,6 +47,13 @@ export interface SweepResult {
   meanItemHolders: number;
   encounterRate: number;
 }
+
+/** First night (1-indexed) the viable set narrows to exactly the true room, or
+ *  null if it never does in the nights played. */
+const firstCollapseNight = (hidingSpace: readonly number[]): number | null => {
+  const i = hidingSpace.findIndex((n) => n === 1);
+  return i === -1 ? null : i + 1;
+};
 
 const mean = (xs: number[]): number =>
   xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -48,6 +77,9 @@ export function runSweep(cells: readonly SweepCell[], seedBase = 0): SweepResult
     const namings = all.reduce((n, m) => n + m.trailNamings, 0);
     const hits = all.reduce((n, m) => n + m.trailHits, 0);
     const forced = all.map((m) => m.forcedNight).filter((n): n is number => n !== null);
+    const collapseNights = all
+      .map((m) => firstCollapseNight(m.hidingSpace))
+      .filter((n): n is number => n !== null);
 
     return {
       label: cell.label,
@@ -55,8 +87,12 @@ export function runSweep(cells: readonly SweepCell[], seedBase = 0): SweepResult
       villainWinRate: all.filter((m) => m.winner === 'oddsocks').length / cell.games,
       caughtRate: all.filter((m) => m.how === 'caught').length / cell.games,
       survivedRate: all.filter((m) => m.how === 'survived').length / cell.games,
+      meanThefts: mean(all.map((m) => m.thefts)),
+      fullQuotaRate: all.filter((m) => m.thefts >= config.lightsRequired).length / cell.games,
       neverForcedRate: all.filter((m) => m.forcedNight === null).length / cell.games,
       medianForcedNight: median(forced),
+      collapseRate: collapseNights.length / cell.games,
+      medianCollapseNight: median(collapseNights),
       meanHidingSpace: mean(all.flatMap((m) => m.hidingSpace)),
       trailAccuracy: namings > 0 ? hits / namings : 0,
       callsPostedPerGame: mean(all.map((m) => m.callsPosted)),
