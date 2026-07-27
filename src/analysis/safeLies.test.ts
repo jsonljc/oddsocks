@@ -3,6 +3,7 @@ import { makeConfig, ROSTER } from '../rules/config.js';
 import { playGame } from '../rules/game.js';
 import { randomBot } from '../bots/random.js';
 import { HOLLOW_HOUSE } from '../rules/houses/hollow.js';
+import { bedroomOf } from '../rules/map.js';
 import { viableRoomsAt, solve, reachableInFourHops } from './safeLies.js';
 import type { GameRecord } from '../rules/game.js';
 import type { NightRecord, Sighting } from '../rules/state.js';
@@ -65,8 +66,10 @@ describe('viableRoomsAt', () => {
     // count, never who paid — so the villain could have spent their dusk pickup
     // there without any public trace. randomBot never posts a Call, so this
     // scenario cannot arise from a real seed; it has to be constructed directly.
+    // Labelled night 2: Calls never resolve on night 1 (night.ts gates on
+    // state.night > 1), so a live Call could not actually happen on night 1.
     const night: NightRecord = {
-      night: 1,
+      night: 2,
       duskPositions: {
         bell: 'bed_bell', pike: 'bed_pike', clem: 'bed_clem',
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'bed_clem',
@@ -183,5 +186,29 @@ describe('solve', () => {
     const r = solve(record);
     expect(r.forcedNight).toBe(1);
     expect(r.hidingSpace).toEqual([0]);
+  });
+
+  it('never breaks the chain solve\'s DP relies on: every true transition is reachable', () => {
+    // forcedNight === null is an aggregate signal: a *different, false* room
+    // surviving in the DP can satisfy it even if the true room was wrongly
+    // dropped along the way. viableRoomsAt's own truth-inclusion test (above)
+    // only covers the single-night constraints — it says nothing about solve's
+    // chain, which has no equivalent per-night identity check, because solve
+    // exposes only an aggregate count and a nullable forcedNight, never the
+    // surviving room sets themselves. So verify the DP's premise directly,
+    // against the real relation it is built from (the night-1 anchor at
+    // bed_<villain>, and every forward/backward transition), rather than
+    // solve's black-box output.
+    for (let seed = 0; seed < 100; seed++) {
+      const g = play(seed);
+      const house = g.config.house;
+      const start = bedroomOf(house, g.villain);
+      const trueRooms = g.nights.map((n) => n.midnightPositions[g.villain]!);
+
+      expect(reachableInFourHops(house, start, trueRooms[0]!)).toBe(true);
+      for (let i = 1; i < trueRooms.length; i++) {
+        expect(reachableInFourHops(house, trueRooms[i - 1]!, trueRooms[i]!)).toBe(true);
+      }
+    }
   });
 });
