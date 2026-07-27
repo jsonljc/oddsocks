@@ -40,6 +40,7 @@ where they disagree, **this list governs**.
 | Task 5 | `resolveMovement` also throws on a `paths` key absent from `from` | Validation was one-directional; the extra submission was silently dropped rather than failing loud. |
 | Task 10 | Keyhole throws on a night with no record, *before* charging the spender | An unfindable night produced `occupants: []`, indistinguishable from a genuinely empty room — in the one mechanism whose job is catching liars. |
 | Task 10 | `resolveBellWatch` credits the real caster and throws on a missing midnight position | `spender` was hardcoded to the watched child, so it was wrong on every emission. |
+| Tasks 4, 7, 13 | **A self-snuff is now publicly identical to a theft**: the `selfSnuff` event is deleted, a self-snuff emits the same `theft` event and the same trail, and `TheftOutcome` gains an internal `selfSnuff: boolean` that never reaches a player. R16 is reversed. | The event named the villain's own bedroom, so `ownerOf(room)` identified them outright — and even renamed, the missing trail was a perfect tell. §4 of the rules calls a self-snuff "excellent cover"; as built it was instant suicide, and the Hush exploit the sweep exists to measure could never have fired. |
 | Task 15 | A free self-snuff grants `activeNights + 1` | `selfSnuffCostsNight` was read by nothing and could not bite where the plan put it, so Task 20's `hush-silent-freeSnuff` cell would have duplicated the baseline and read as a null result. |
 
 ## File Structure
@@ -3265,8 +3266,8 @@ export function playGame(
       claims: morning.claims,
     });
 
-    if (!config.selfSnuffCostsNight && extraNights === 0 &&
-        midnight.events.some((e) => e.t === 'selfSnuff')) {
+    // theft.selfSnuff is internal — publicly a self-snuff is just a light going out.
+    if (!config.selfSnuffCostsNight && extraNights === 0 && midnight.theft.selfSnuff) {
       extraNights = 1;
     }
 
@@ -4148,7 +4149,9 @@ export interface GameMetrics {
   callsLive: number;
   callsCaught: number;
   thefts: number;
-  /** Active nights the villain spent on neither a theft nor a self-snuff. */
+  /** Self-snuffs included in `thefts`; recoverable only from the omniscient record. */
+  selfSnuffs: number;
+  /** Active nights that produced no light going out at all. */
   markings: number;
   meanItemHolders: number;
   encounterRate: number;
@@ -4192,11 +4195,13 @@ export function measure(record: GameRecord): GameMetrics {
     for (const n of occupancy.values()) if (n >= 2) sharedRooms++;
   }
 
+  // A self-snuff is publicly just a theft, so `thefts` already counts it. From the
+  // omniscient record we can still tell them apart: a self-snuff is the one whose
+  // victim is the villain. A marking is an active night that produced no light at all.
+  const selfSnuffs = record.nights.filter((n) =>
+    n.events.some((e) => e.t === 'theft' && e.victim === record.villain)).length;
   const activeNights = Math.max(0, record.nights.length - 1);
-  // A marking is an active night the villain spent without a theft or a self-snuff.
-  const selfSnuffs = record.nights
-    .filter((n) => n.events.some((e) => e.t === 'selfSnuff')).length;
-  const markings = Math.max(0, activeNights - thefts - selfSnuffs);
+  const markings = Math.max(0, activeNights - thefts);
 
   return {
     winner: record.outcome.winner,
@@ -4210,6 +4215,7 @@ export function measure(record: GameRecord): GameMetrics {
     callsLive,
     callsCaught,
     thefts,
+    selfSnuffs,
     markings,
     meanItemHolders: record.nights.length > 0 ? holderTotal / record.nights.length : 0,
     encounterRate: roomSlots > 0 ? sharedRooms / roomSlots : 0,
