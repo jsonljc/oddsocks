@@ -41,10 +41,11 @@ describe('runSweep', () => {
   // discriminate a config. The real signal is whether the viable set ever narrows
   // to exactly the true room (hidingSpace === 1), which safeLies.test.ts's own
   // "collapses ... when fully witnessed" case proves is a real, reachable event.
-  // Pin collapseRate/medianCollapseNight/meanThefts/fullQuotaRate against values
-  // computed fresh here from the raw games, not through runSweep's own internals,
-  // so a wrong aggregation (off-by-one night index, <=1 instead of ===1, mixing up
-  // "first" collapse with "any", a wrong quota threshold) would diverge from it.
+  // Pin collapseRate/medianCollapseNight/meanThefts/fullQuotaRate/lateCollapseRate
+  // against values computed fresh here from the raw games, not through runSweep's
+  // own internals, so a wrong aggregation (off-by-one night index, <=1 instead of
+  // ===1, mixing up "first" collapse with "any", a wrong quota threshold, or
+  // counting night 1 in the "late" figure) would diverge from it.
   it('reports collapse-to-truth and theft tempo matching an independent recomputation', () => {
     const config = makeConfig();
     const bots = Object.fromEntries(ROSTER.map((p) => [p, heuristicBot]));
@@ -55,6 +56,7 @@ describe('runSweep', () => {
     const firstCollapseNights: number[] = [];
     let theftTotal = 0;
     let fullQuotaGames = 0;
+    let lateCollapsedGames = 0;
 
     for (let i = 0; i < games; i++) {
       const m = measure(playGame(config, seedBase + i, bots));
@@ -63,6 +65,11 @@ describe('runSweep', () => {
         collapsedGames++;
         firstCollapseNights.push(night + 1);
       }
+      // "Late" = night 2 onward (index 1+) — night 1 has no theft, marking, or
+      // Call, so a collapse there costs the villain nothing. Deliberately a
+      // separate scan from the "first collapse" one above: this asks "does a
+      // collapse ever happen after night 1," not "was the *first* one late."
+      if (m.hidingSpace.slice(1).some((n) => n === 1)) lateCollapsedGames++;
       theftTotal += m.thefts;
       if (m.thefts >= config.lightsRequired) fullQuotaGames++;
     }
@@ -72,15 +79,20 @@ describe('runSweep', () => {
     expect(r!.collapseRate).toBeCloseTo(collapsedGames / games, 9);
     expect(r!.meanThefts).toBeCloseTo(theftTotal / games, 9);
     expect(r!.fullQuotaRate).toBeCloseTo(fullQuotaGames / games, 9);
+    expect(r!.lateCollapseRate).toBeCloseTo(lateCollapsedGames / games, 9);
 
     const sorted = [...firstCollapseNights].sort((a, b) => a - b);
     const expectedMedian = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)]! : null;
     expect(r!.medianCollapseNight).toBe(expectedMedian);
 
     // The recomputation itself must not be vacuous: some games in this sample
-    // actually do collapse, or the collapseRate/medianCollapseNight checks above
-    // would hold trivially at 0/null regardless of what the implementation does.
+    // actually do collapse (at all, and specifically after night 1), or several
+    // of the checks above would hold trivially at 0/null regardless of what the
+    // implementation does. lateCollapsedGames < collapsedGames is not asserted
+    // as a strict "<" (both could coincide in a tiny sample) but must hold as "<=".
     expect(collapsedGames).toBeGreaterThan(0);
+    expect(lateCollapsedGames).toBeGreaterThan(0);
+    expect(lateCollapsedGames).toBeLessThanOrEqual(collapsedGames);
   });
 });
 

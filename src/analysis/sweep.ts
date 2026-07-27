@@ -40,6 +40,15 @@ export interface SweepResult {
   collapseRate: number;
   /** Median night of the first such collapse, among games where it happens. */
   medianCollapseNight: number | null;
+  /**
+   * Share of games where a collapse happens on night 2 or later — i.e.
+   * excluding night 1, which has no theft, marking, or Call, so a collapse
+   * there costs the villain nothing. This is the number that answers "how
+   * often is the villain's story pinned on a night where being pinned
+   * actually matters," which `collapseRate` alone conflates with the (usually
+   * much larger, usually free) night-1 exposure.
+   */
+  lateCollapseRate: number;
   meanHidingSpace: number;
   trailAccuracy: number;
   callsPostedPerGame: number;
@@ -54,6 +63,12 @@ const firstCollapseNight = (hidingSpace: readonly number[]): number | null => {
   const i = hidingSpace.findIndex((n) => n === 1);
   return i === -1 ? null : i + 1;
 };
+
+/** Whether the viable set narrows to exactly the true room on night 2 or
+ *  later — night 1 (index 0) is deliberately excluded, since it precedes any
+ *  theft, marking, or Call and so cannot cost the villain anything. */
+const collapsesAfterNight1 = (hidingSpace: readonly number[]): boolean =>
+  hidingSpace.slice(1).some((n) => n === 1);
 
 const mean = (xs: number[]): number =>
   xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -93,6 +108,7 @@ export function runSweep(cells: readonly SweepCell[], seedBase = 0): SweepResult
       medianForcedNight: median(forced),
       collapseRate: collapseNights.length / cell.games,
       medianCollapseNight: median(collapseNights),
+      lateCollapseRate: all.filter((m) => collapsesAfterNight1(m.hidingSpace)).length / cell.games,
       meanHidingSpace: mean(all.flatMap((m) => m.hidingSpace)),
       trailAccuracy: namings > 0 ? hits / namings : 0,
       callsPostedPerGame: mean(all.map((m) => m.callsPosted)),

@@ -11,6 +11,7 @@ const COLUMNS: { key: keyof SweepResult; head: string; width: number }[] = [
   { key: 'medianForcedNight', head: 'medFrc', width: 7 },
   { key: 'collapseRate', head: 'collapse', width: 9 },
   { key: 'medianCollapseNight', head: 'medColl', width: 8 },
+  { key: 'lateCollapseRate', head: 'lateColl', width: 9 },
   { key: 'meanHidingSpace', head: 'hiding', width: 7 },
   { key: 'trailAccuracy', head: 'trailAcc', width: 9 },
   { key: 'callsPostedPerGame', head: 'posted', width: 7 },
