@@ -126,18 +126,31 @@ export function runMidnight(
 export function runMorning(
   state: GameState,
   _dusk: DuskResult,
-  _midnight: MidnightResult,
+  midnight: MidnightResult,
   actions: Readonly<Record<PlayerId, MorningAction>>,
   _rng: Rng,
-): { events: PublicEvent[]; claims: Record<PlayerId, RoomId | null> } {
+): { events: PublicEvent[]; claims: Record<PlayerId, RoomId | null>; reporters: PlayerId[] } {
   clearNightlyItemEffects(state);
   state.activeCall = null;
 
   const events: PublicEvent[] = [];
   const claims: Record<PlayerId, RoomId | null> = {};
 
+  // The Hush's second half: a snuffed child can no longer report what they saw,
+  // not just where they slept. Under R15 every child who still can, does, truthfully
+  // and without a budget — so a report is simply that child's sighting, made public.
+  const reporters: PlayerId[] = [];
   for (const p of state.config.roster) {
-    claims[p] = canClaim(state, p) ? actions[p]!.claim : null;
+    const speaks = canClaim(state, p);
+    claims[p] = speaks ? actions[p]!.claim : null;
+    if (speaks) {
+      const s = midnight.sightings[p]!;
+      reporters.push(p);
+      events.push({
+        t: 'reported', player: p, room: s.room, named: s.named,
+        others: s.others, lit: s.lit,
+      });
+    }
     events.push(...applyItemUses(state, actions[p]!.itemUses));
   }
 
@@ -153,5 +166,5 @@ export function runMorning(
     }
   }
 
-  return { events, claims };
+  return { events, claims, reporters };
 }

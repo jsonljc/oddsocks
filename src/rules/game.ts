@@ -84,6 +84,7 @@ export function playGame(
       events: [...dusk.events, ...midnight.events, ...morning.events],
       sightings: midnight.sightings,
       claims: morning.claims,
+      reporters: morning.reporters,
     });
 
     // theft.selfSnuff is internal — publicly a self-snuff is just a light going out.

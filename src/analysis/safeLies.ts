@@ -1,6 +1,6 @@
 import type { GameRecord } from '../rules/game.js';
 import type { House, OddityId, PlayerId, RoomId } from '../rules/types.js';
-import type { NightRecord } from '../rules/state.js';
+import type { NightRecord, PublicEvent } from '../rules/state.js';
 import { bedroomOf, doorsOf, floorOf, roomsWithin } from '../rules/map.js';
 import { PUBLIC_ODDITIES } from '../rules/oddities.js';
 
@@ -60,28 +60,37 @@ export function viableRoomsAt(record: GameRecord, night: number): RoomId[] {
   const truth = n.midnightPositions[villain]!;
   const innocents = others(record);
 
+  // The Hush strips both halves of a snuffed child's voice, so the only public
+  // testimony is what `runMorning` actually let them report — never the raw
+  // truth of `n.sightings`, which includes people the Hush silenced. The
+  // villain's own report is excluded too: it is never third-party testimony
+  // against themselves (a lit self-report can never name oneself, so it would
+  // otherwise look, wrongly, like a witness who failed to spot the villain).
+  const reports = n.events
+    .filter((e): e is Extract<PublicEvent, { t: 'reported' }> => e.t === 'reported')
+    .filter((rep) => rep.player !== villain);
+
   // A lit-room witness names everyone present. If one named the villain, the
   // claim is pinned; if one was somewhere else and did not, that room is refuted.
   const refuted = new Set<RoomId>();
-  for (const p of innocents) {
-    const s = n.sightings[p]!;
-    if (!s.lit) continue;
-    if (s.named.includes(villain)) return [truth];
-    refuted.add(s.room);
+  for (const rep of reports) {
+    if (!rep.lit) continue;
+    if (rep.named.includes(villain)) return [truth];
+    refuted.add(rep.room);
   }
 
-  // Dark rooms hide identity but not headcount. If an occupant reported k others,
+  // Dark rooms hide identity but not headcount. If a reporter reported k others,
   // exactly k+1 players were there — one more claimant than that is a contradiction.
   // Tally only innocents' claims: they are always truthful, so this counts how many
   // seats are already spoken for before the villain's hypothetical claim adds one
   // more. Counting the villain's own (truthful) claim here too would double-count
   // it against the very room being tested, refuting the villain's real room
-  // whenever nobody present happened to be Hushed.
-  for (const p of innocents) {
-    const s = n.sightings[p]!;
-    if (s.lit) continue;
-    const claimants = innocents.filter((q) => n.claims[q] === s.room).length;
-    if (claimants >= s.others + 1) refuted.add(s.room);
+  // whenever nobody present happened to be Hushed — so this still deliberately
+  // excludes the villain, the same fix Task 16 made, now applied to reports.
+  for (const rep of reports) {
+    if (rep.lit) continue;
+    const claimants = innocents.filter((q) => n.claims[q] === rep.room).length;
+    if (claimants >= rep.others + 1) refuted.add(rep.room);
   }
 
   let candidates = Object.keys(house.rooms).filter((r) => !refuted.has(r));

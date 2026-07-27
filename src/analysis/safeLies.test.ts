@@ -33,8 +33,11 @@ describe('viableRoomsAt', () => {
     for (let seed = 0; seed < 40; seed++) {
       const g = play(seed);
       g.nights.forEach((n, i) => {
+        // Only a witness the Hush still lets speak can pin the villain — a
+        // Hushed witness's sighting is true but was never made public testimony.
         const seen = ROSTER.some((p) =>
-          p !== g.villain && n.sightings[p]!.lit && n.sightings[p]!.named.includes(g.villain));
+          p !== g.villain && n.reporters.includes(p) &&
+          n.sightings[p]!.lit && n.sightings[p]!.named.includes(g.villain));
         if (!seen) return;
         const truth = n.midnightPositions[g.villain]!;
         expect(viableRoomsAt(g, i + 1)).toEqual([truth]);
@@ -55,7 +58,7 @@ describe('viableRoomsAt', () => {
     const g = play(3);
     const night = g.nights[1]!;
     const occupied = ROSTER.find((p) =>
-      p !== g.villain && night.sightings[p]!.lit &&
+      p !== g.villain && night.reporters.includes(p) && night.sightings[p]!.lit &&
       night.midnightPositions[p] !== night.midnightPositions[g.villain]);
     if (!occupied) return;
     expect(viableRoomsAt(g, 2)).not.toContain(night.midnightPositions[occupied]);
@@ -82,6 +85,14 @@ describe('viableRoomsAt', () => {
         { t: 'itemTaken', player: 'moss', item: 'lantern', room: 'kitchen' },
         { t: 'callResolved', target: 'bell', room: 'landing', hands: 2, outcome: 'cleared' },
         { t: 'oddity', source: 'clem', detail: 'itemHolders', payload: { count: 0 } },
+        // Nobody is Hushed in this isolated fixture, so every child reports —
+        // the solver now reads these, not `sightings`, for witness testimony.
+        { t: 'reported', player: 'bell', room: 'bed_bell', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'pike', room: 'bed_pike', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 1, lit: false },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'moss', room: 'bed_clem', named: ['clem'], others: 1, lit: false },
       ],
       sightings: {
         bell: sighting('bed_bell', true, 0),
@@ -95,6 +106,7 @@ describe('viableRoomsAt', () => {
         bell: 'bed_bell', pike: 'bed_pike', clem: 'bed_clem',
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'bed_clem',
       },
+      reporters: [...ROSTER],
     };
 
     const record: GameRecord = {
@@ -133,7 +145,8 @@ describe('solve', () => {
     const r = solve(g);
     g.nights.forEach((n, i) => {
       const witnessed = ROSTER.some((p) =>
-        p !== g.villain && n.sightings[p]!.lit && n.sightings[p]!.named.includes(g.villain));
+        p !== g.villain && n.reporters.includes(p) &&
+        n.sightings[p]!.lit && n.sightings[p]!.named.includes(g.villain));
       if (witnessed) expect(r.hidingSpace[i]).toBe(1);
     });
   });
@@ -153,7 +166,16 @@ describe('solve', () => {
         bell: 'bed_wren', pike: 'bed_wren', clem: 'bed_clem',
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'bed_moss',
       },
-      events: [],
+      events: [
+        // Night 1 always precedes any theft, so nobody could yet be Hushed —
+        // every child reports, matching their sighting exactly.
+        { t: 'reported', player: 'bell', room: 'bed_wren', named: ['pike', 'wren'], others: 2, lit: true },
+        { t: 'reported', player: 'pike', room: 'bed_wren', named: ['bell', 'wren'], others: 2, lit: true },
+        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: ['bell', 'pike'], others: 2, lit: true },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'moss', room: 'bed_moss', named: [], others: 0, lit: true },
+      ],
       sightings: {
         bell: sighting('bed_wren', true, 2, ['pike', 'wren']),
         pike: sighting('bed_wren', true, 2, ['bell', 'wren']),
@@ -166,6 +188,7 @@ describe('solve', () => {
         bell: 'bed_wren', pike: 'bed_wren', clem: 'bed_clem',
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'bed_moss',
       },
+      reporters: [...ROSTER],
     };
 
     const record: GameRecord = {

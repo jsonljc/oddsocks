@@ -33,7 +33,9 @@ export type PublicEvent =
   | { t: 'bell'; spender: PlayerId; target: PlayerId; room: RoomId }
   | { t: 'bellCast'; spender: PlayerId; target: PlayerId }
   | { t: 'lantern'; spender: PlayerId; room: RoomId }
-  | { t: 'eyesOpen'; player: PlayerId; reason: string };
+  | { t: 'eyesOpen'; player: PlayerId; reason: string }
+  | { t: 'reported'; player: PlayerId; room: RoomId; named: PlayerId[];
+      others: number; lit: boolean };
 
 export interface NightRecord {
   night: number;
@@ -44,6 +46,8 @@ export interface NightRecord {
   sightings: Record<PlayerId, Sighting>;
   /** What each player said in the morning. `null` means the Hush exempted them. */
   claims: Record<PlayerId, RoomId | null>;
+  /** Who was able to give testimony this morning. The Hush removes people from here. */
+  reporters: PlayerId[];
 }
 
 export interface GameState {

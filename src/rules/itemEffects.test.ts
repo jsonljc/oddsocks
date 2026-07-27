@@ -41,7 +41,7 @@ describe('the Keyhole', () => {
     s.held['pike'] = ['keyhole'];
     s.history.push({
       night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen', moss: 'kitchen' },
-      events: [], sightings: {}, claims: {},
+      events: [], sightings: {}, claims: {}, reporters: [],
     });
     const events = applyItemUses(s, [
       { kind: 'keyhole', spender: 'pike', room: 'kitchen', night: 2 }]);
@@ -54,7 +54,7 @@ describe('the Keyhole', () => {
     s.held['pike'] = ['keyhole'];
     s.history.push({
       night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen' },
-      events: [], sightings: {}, claims: {},
+      events: [], sightings: {}, claims: {}, reporters: [],
     });
     const events = applyItemUses(s, [{ kind: 'keyhole', spender: 'pike', room: 'attic', night: 2 }]);
     expect((events[0] as { occupants: string[] }).occupants).toEqual([]);
@@ -65,7 +65,7 @@ describe('the Keyhole', () => {
     s.held['pike'] = ['keyhole'];
     s.history.push({
       night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen' },
-      events: [], sightings: {}, claims: {},
+      events: [], sightings: {}, claims: {}, reporters: [],
     });
     expect(() => applyItemUses(s, [{ kind: 'keyhole', spender: 'pike', room: 'kitchen', night: 6 }]))
       .toThrow(/no record of night/i);
