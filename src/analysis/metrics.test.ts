@@ -63,9 +63,46 @@ describe('measure', () => {
     }
   });
 
-  it('never reports a negative marking count', () => {
+  // Under the default config, the heuristic bot's villain never self-snuffs
+  // (selfSnuffCostsNight: true means it never pays off), so selfSnuffs is
+  // always 0 above — the subset check holds no matter what selfSnuffs counts,
+  // including a wrong count (even "every theft is a self-snuff" satisfies a
+  // subset-of-itself bound). Make snuffing free so real self-snuffs occur, and
+  // pin the exact count against an expected value derived independently in
+  // this test — straight off `victim`/`villain` on the raw record, never
+  // through measure()'s own internals — so a wrong predicate (e.g. inverted,
+  // or "every theft counts") diverges from it on the very first seed that has
+  // both a self-snuff and an ordinary theft.
+  it('counts exactly the theft nights whose victim is the villain', () => {
+    const freeSnuffConfig = makeConfig({ selfSnuffCostsNight: false });
+    let sawSelfSnuff = false;
     for (let seed = 0; seed < 60; seed++) {
-      expect(measure(play(seed)).markings).toBeGreaterThanOrEqual(0);
+      const g = playGame(freeSnuffConfig, seed, bots);
+      const m = measure(g);
+      const expected = g.nights.filter((n) =>
+        n.events.some((e) => e.t === 'theft' && e.victim === g.villain)).length;
+      expect(m.selfSnuffs).toBe(expected);
+      expect(m.selfSnuffs).toBeLessThanOrEqual(m.thefts);
+      if (m.selfSnuffs > 0) sawSelfSnuff = true;
+    }
+    // A villain owns exactly one bedroom, so a game has at most one self-snuff —
+    // but across 60 seeds with snuffing free, at least one must land, or the
+    // equality above is only ever confirming 0 === 0.
+    expect(sawSelfSnuff).toBe(true);
+  });
+
+  // thefts <= activeNights and markings >= 0 individually are both satisfiable
+  // by a broken measure() (e.g. markings := thefts, or markings := activeNights
+  // outright) as long as neither goes negative — the non-negativity clamp in
+  // the implementation would hide exactly that regression. Pin the exact
+  // identity instead, using only g.nights.length (never measure()'s own
+  // internals): night 1 is always safe, so every other night played is active
+  // and lands in exactly one of these two buckets, no third option.
+  it('splits every active night exactly between a theft and a marking', () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const g = play(seed);
+      const m = measure(g);
+      expect(m.thefts + m.markings).toBe(g.nights.length - 1);
     }
   });
 });
