@@ -89,8 +89,9 @@ died."* This design treats that as a live hypothesis, not a fallback.
 (disabled, control condition).
 
 Plus `selfSnuffCostsNight: boolean`, default `true`. When **false**, a villain who snuffs their own
-light gets `activeNights + 1` — the snuff does not spend one of their limited nights, so the
-deadline moves out by one. They own a single bedroom, so this fires at most once per game. That is
+light gets one extra night on the clock (`totalNights + 1`) — the snuff does not spend one of their
+limited nights, so the deadline moves out by one. They own a single bedroom, so this fires at most
+once per game. That is
 the A/B the exploit needs: it separates "self-snuffing buys claim-immunity" from "self-snuffing
 costs the one spare night," and without it the two are confounded.
 
@@ -131,6 +132,11 @@ is standing in a room that has just gone dark, and sees only a shadow.
 
 Therefore **the villain's only exposure on a theft night is the trail.** That makes trail accuracy
 the single most important number in the game, and it is the primary metric of this harness.
+
+This only holds if the villain's own morning testimony says nothing. Build one's first engine broke
+it by mistake — `runMorning` applied R15 to the whole roster, so the villain publicly reported the
+room it had just robbed on 100% of theft nights. See **R19**: the villain reports their claimed room
+and nothing else, which is what makes this section true rather than aspirational.
 
 ### 3.5 The duo looks strictly worse than the solo
 
@@ -282,8 +288,10 @@ Per configuration, over N games:
 4. **Trail accuracy** — P(the trail names the actual thief). Per §3.4 this is the most important
    single number in the harness.
 5. Calls posted / Calls that went live (≥2 hands) / Calls that caught.
-6. Mean item-holders per night — the size of the pool that can physically join a Call.
-7. Dodge frequency, and villain nights wasted.
+6. Mean item-holders per night — the size of the pool that can physically join a Call. A **stock**,
+   not a flow: everyone currently holding an item and not marked, read the moment before a Call
+   resolves and spends those items. Counting the night's pickups answers a different question.
+7. Dodge frequency (live Calls whose target went elsewhere), self-snuffs, and markings per game.
 8. Encounter rate (share of rooms holding ≥2 people) — reported, but flagged bot-dependent.
 
 ---
