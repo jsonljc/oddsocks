@@ -1,7 +1,7 @@
 import type { GameRecord } from '../rules/game.js';
 import type { House, OddityId, PlayerId, RoomId } from '../rules/types.js';
 import type { NightRecord } from '../rules/state.js';
-import { doorsOf, floorOf, roomsWithin } from '../rules/map.js';
+import { bedroomOf, doorsOf, floorOf, roomsWithin } from '../rules/map.js';
 import { PUBLIC_ODDITIES } from '../rules/oddities.js';
 
 /** Two phases of two steps each: every night is a walk of exactly four edges. */
@@ -146,11 +146,27 @@ function publicOdditiesAllow(record: GameRecord, n: NightRecord, claim: RoomId):
     if (e.source === 'clem' && e.detail === 'itemHolders' && villain !== 'clem') {
       const clemRoom = n.midnightPositions['clem'];
       if (!clemRoom || claim !== clemRoom) continue;
+
+      // The solver can only ever bound the villain's holdings, never know them
+      // for certain — and the table can't either, which is exactly why this has
+      // to be a *provable* lower bound, not a reconstruction. A live Call spends
+      // items from anonymous hands (`callResolved` carries only a count, never
+      // names), so if one went live this night the villain might have paid
+      // without leaving any trace. Treat that as "nothing provable" rather than
+      // guess: an over-tight bound refutes the truth, a loose one merely leaves
+      // signal on the table, and only the second direction is safe. Do not
+      // "optimise" this back into inferring who paid — the table can't either.
+      const liveCall = n.events.some((x) => x.t === 'callResolved' && x.outcome !== 'fizzled');
+      if (liveCall) continue;
+
       // Item holding is public, so a villain claiming Clem's room must fit the
-      // tally. A dusk pickup can be stripped by the Grip later the same midnight —
-      // the Grip always takes from the thief, and the villain is always the
-      // thief — so a grip this night cancels out a same-night pickup rather than
-      // adding to it.
+      // tally. A dusk pickup can be stripped by the Grip later the same midnight
+      // — the Grip always resolves on a theft with the victim home, and the
+      // villain is always the thief, so treat any grip this night as a possible
+      // (not merely confirmed) loss of the item just picked up. This is a lower
+      // bound, not an exact count: a multi-item carrier (Moss) holding something
+      // from an earlier night, invisible to this night's events, under-counts
+      // here too — also the safe direction, so it is left alone.
       const pickedUp = n.events.filter((x) => x.t === 'itemTaken' && x.player === villain).length;
       const gripped = n.events.some((x) => x.t === 'grip');
       const held = Math.max(0, pickedUp - (gripped ? 1 : 0));
@@ -201,8 +217,18 @@ export function solve(record: GameRecord): { forcedNight: number | null; hidingS
   const viable: RoomId[][] = [];
   for (let i = 1; i <= nights; i++) viable.push(viableRoomsAt(record, i));
 
-  // Night 1 has no incoming transition to check — an empty set there is already
-  // a forced contradiction, before the forward pass even starts.
+  // Everyone starts the game in their own bedroom — public knowledge, not a
+  // deduction — so night 1's claim is a transition too: it must be reachable
+  // from bed_<villain> in exactly four hops, under the same rule (and the same
+  // Pike floor-crossing check) as every later night.
+  if (nights > 0) {
+    const start = bedroomOf(house, record.villain);
+    const arrival = record.nights[0]!;
+    viable[0] = viable[0]!.filter((room) => canTransition(house, start, room, arrival));
+  }
+
+  // An empty night-1 set is already a forced contradiction, before the forward
+  // pass (which only checks night 2 onward) even starts.
   if ((viable[0]?.length ?? 0) === 0) {
     return { forcedNight: 1, hidingSpace: padded([0], nights) };
   }
