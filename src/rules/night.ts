@@ -1,7 +1,7 @@
 import type { Rng } from './rng.js';
 import type { Path, PlayerId, RoomId } from './types.js';
 import type { PostedCall, PublicEvent, Sighting } from './state.js';
-import { type GameState, canClaim } from './state.js';
+import { type GameState, canClaim, isLit } from './state.js';
 import { resolveMovement } from './movement.js';
 import { sightingsAt } from './visibility.js';
 import { resolveTheft, type TheftOutcome } from './theft.js';
@@ -123,6 +123,42 @@ export function runMidnight(
   return { positions: moved.positions, steps: moved.steps, events, sightings, theft, marked, caught };
 }
 
+/**
+ * What one child says they saw, or `null` if there is nothing for them to say.
+ *
+ * R15 binds **innocents**: every one who still can reports, truthfully and
+ * without a budget, so their report is simply their sighting made public.
+ *
+ * The villain is outside R15, and R19 keeps the engine from applying it to them
+ * anyway: their report carries the room they *claimed* — never the room they
+ * were in — and names nobody. Publishing their sighting handed the table the
+ * robbed room on every theft night, a report that contradicted their own claim
+ * most mornings, and dark-room names only they and Wren can produce. Dropping
+ * them from the loop instead is worse, not better: on night one nobody is
+ * Hushed, so the one child who said nothing would be the villain outright.
+ * Build one models no *content* for a villain's testimony — `MorningAction` has
+ * no "what I saw" field, and inventing one needs the liar AI §6.1 exists to
+ * avoid — so they say where they slept and stop there.
+ */
+function reportOf(
+  state: GameState,
+  player: PlayerId,
+  claim: RoomId | null,
+  sighting: Sighting,
+): Extract<PublicEvent, { t: 'reported' }> | null {
+  if (player !== state.villain) {
+    return {
+      t: 'reported', player, room: sighting.room, named: sighting.named,
+      others: sighting.others, lit: sighting.lit, night: state.night,
+    };
+  }
+  if (claim === null) return null;
+  return {
+    t: 'reported', player, room: claim, named: [], others: 0,
+    lit: isLit(state, claim), night: state.night,
+  };
+}
+
 export function runMorning(
   state: GameState,
   _dusk: DuskResult,
@@ -137,19 +173,17 @@ export function runMorning(
   const claims: Record<PlayerId, RoomId | null> = {};
 
   // The Hush's second half: a snuffed child can no longer report what they saw,
-  // not just where they slept. Under R15 every child who still can, does, truthfully
-  // and without a budget — so a report is simply that child's sighting, made public.
+  // not just where they slept.
   const reporters: PlayerId[] = [];
   for (const p of state.config.roster) {
     const speaks = canClaim(state, p);
-    claims[p] = speaks ? actions[p]!.claim : null;
-    if (speaks) {
-      const s = midnight.sightings[p]!;
+    const claim = speaks ? actions[p]!.claim : null;
+    claims[p] = claim;
+
+    const report = speaks ? reportOf(state, p, claim, midnight.sightings[p]!) : null;
+    if (report) {
       reporters.push(p);
-      events.push({
-        t: 'reported', player: p, room: s.room, named: s.named,
-        others: s.others, lit: s.lit, night: state.night,
-      });
+      events.push(report);
     }
     events.push(...applyItemUses(state, actions[p]!.itemUses));
   }
