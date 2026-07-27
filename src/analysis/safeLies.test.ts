@@ -2,11 +2,25 @@ import { describe, it, expect } from 'vitest';
 import { makeConfig, ROSTER } from '../rules/config.js';
 import { playGame } from '../rules/game.js';
 import { randomBot } from '../bots/random.js';
-import { viableRoomsAt, solve } from './safeLies.js';
+import { HOLLOW_HOUSE } from '../rules/houses/hollow.js';
+import { viableRoomsAt, solve, reachableInFourHops } from './safeLies.js';
 import type { GameRecord } from '../rules/game.js';
 
 const bots = Object.fromEntries(ROSTER.map((p) => [p, randomBot]));
 const play = (seed: number): GameRecord => playGame(makeConfig(), seed, bots);
+
+describe('reachableInFourHops', () => {
+  it('cannot enter a dead-end bedroom whose one door cannot make a three-edge round trip', () => {
+    expect(reachableInFourHops(HOLLOW_HOUSE, 'east_hall', 'bed_clem')).toBe(false);
+    expect(reachableInFourHops(HOLLOW_HOUSE, 'landing', 'bed_wren')).toBe(false);
+    expect(reachableInFourHops(HOLLOW_HOUSE, 'sewing_room', 'bed_moss')).toBe(false);
+    expect(reachableInFourHops(HOLLOW_HOUSE, 'attic', 'bed_moss')).toBe(false);
+  });
+
+  it('enters a dead-end bedroom whose neighbour can make the three-edge round trip', () => {
+    expect(reachableInFourHops(HOLLOW_HOUSE, 'west_hall', 'bed_bell')).toBe(true);
+  });
+});
 
 describe('viableRoomsAt', () => {
   it('never marks a room viable when a lit-room witness saw the villain elsewhere', () => {
