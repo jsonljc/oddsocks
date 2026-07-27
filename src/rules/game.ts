@@ -28,6 +28,7 @@ export function knowledgeFor(
     position: state.positions[player]!,
     held: [...state.held[player]!],
     lit: { ...state.lit },
+    lanternRooms: [...state.lanternRooms],
     publicEvents: state.history.flatMap((h) => h.events),
     // Copy, don't alias: sightingLog[player] and claimLog both keep growing
     // after this call returns. Handing over the live arrays would let a bot
@@ -85,6 +86,8 @@ export function playGame(
       sightings: midnight.sightings,
       claims: morning.claims,
       reporters: morning.reporters,
+      callPool: midnight.callPool,
+      marked: midnight.marked,
     });
 
     // theft.selfSnuff is internal — publicly a self-snuff is just a light going out.

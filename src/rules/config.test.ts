@@ -9,10 +9,9 @@ describe('config', () => {
 
   it('encodes the six-player numbers from the rules document', () => {
     expect(DEFAULT_CONFIG.lightsRequired).toBe(5);
-    expect(DEFAULT_CONFIG.activeNights).toBe(6);
     expect(DEFAULT_CONFIG.totalNights).toBe(7);
-    expect(DEFAULT_CONFIG.activeNights).toBe(DEFAULT_CONFIG.lightsRequired + 1);
-    expect(DEFAULT_CONFIG.totalNights).toBe(DEFAULT_CONFIG.activeNights + 1);
+    // Five lights plus one spare active night, plus the safe night 1.
+    expect(DEFAULT_CONFIG.totalNights).toBe(DEFAULT_CONFIG.lightsRequired + 2);
   });
 
   it('defaults to the rulings recorded in the spec', () => {

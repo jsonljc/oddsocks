@@ -18,9 +18,36 @@ describe('runSweep', () => {
     expect(r[0]!.games).toBe(20);
   });
 
-  it('reports rates that sum to one across the three outcomes', () => {
-    const [r] = runSweep([{ label: 'x', overrides: {}, games: 60 }], 5);
+  // Summing to one is invariant under swapping any two of the three columns,
+  // and `caughtRate` is legitimately 0 in every game these bots play — so a
+  // swap of `caughtRate` and `survivedRate` would invert the findings
+  // document's leading claim ("caught is 0 in every one of the 24,000 games")
+  // with a green suite. Pin each rate against the raw outcome on the same
+  // seeds, read straight off `playGame`, never through `measure`.
+  it('reports outcome rates matching the raw records, not merely summing to one', () => {
+    const config = makeConfig();
+    const bots = Object.fromEntries(ROSTER.map((p) => [p, heuristicBot]));
+    const games = 60;
+    const seedBase = 5;
+
+    let caught = 0, survived = 0, villainWon = 0;
+    for (let i = 0; i < games; i++) {
+      const { outcome } = playGame(config, seedBase + i, bots);
+      if (outcome.how === 'caught') caught++;
+      if (outcome.how === 'survived') survived++;
+      if (outcome.winner === 'oddsocks') villainWon++;
+    }
+
+    const [r] = runSweep([{ label: 'x', overrides: {}, games }], seedBase);
+    expect(r!.caughtRate).toBeCloseTo(caught / games, 9);
+    expect(r!.survivedRate).toBeCloseTo(survived / games, 9);
+    expect(r!.villainWinRate).toBeCloseTo(villainWon / games, 9);
     expect(r!.caughtRate + r!.survivedRate + r!.villainWinRate).toBeCloseTo(1, 6);
+
+    // The three columns must not all read the same, or a swap could not diverge.
+    expect(survived).toBeGreaterThan(0);
+    expect(villainWon).toBeGreaterThan(0);
+    expect(survived).not.toBe(villainWon);
   });
 
   it('is deterministic for the same seed base', () => {

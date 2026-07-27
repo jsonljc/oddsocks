@@ -48,6 +48,20 @@ export interface NightRecord {
   claims: Record<PlayerId, RoomId | null>;
   /** Who was able to give testimony this morning. The Hush removes people from here. */
   reporters: PlayerId[];
+  /**
+   * Who could physically have joined a Call tonight — holding an item and not
+   * marked — snapshotted the moment before one resolves and spends those items.
+   * A **stock**, deliberately: the size of this pool against
+   * `callHandsRequired` is what spec §6.2 #6 asks about, and counting the
+   * night's pickups instead answers a different, much smaller question.
+   */
+  callPool: PlayerId[];
+  /**
+   * Who the villain marked tonight, if anyone. Never public — nobody is ever
+   * told (§5) — but the omniscient record carries it so the sweep can count
+   * markings instead of inferring them from nights where nothing happened.
+   */
+  marked: PlayerId | null;
 }
 
 export interface GameState {

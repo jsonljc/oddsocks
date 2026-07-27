@@ -29,6 +29,7 @@ const quietNight = (night: number): NightRecord => ({
   sightings: Object.fromEntries(ROSTER.map((p) => [p, sighting(`bed_${p}`, true, 0)])),
   claims: Object.fromEntries(ROSTER.map((p) => [p, `bed_${p}`])),
   reporters: [...ROSTER],
+  callPool: [], marked: null,
 });
 
 describe('reachableInFourHops', () => {
@@ -78,6 +79,7 @@ describe('knownRoomOf', () => {
       wren: 'bed_wren', sparrow: null, moss: 'attic',
     },
     reporters: ['bell', 'wren', 'moss'],
+    callPool: [], marked: null,
   };
 
   const record: GameRecord = {
@@ -193,6 +195,7 @@ describe('viableRoomsAt', () => {
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'kitchen',
       },
       reporters: ['pike', 'clem', 'wren', 'sparrow', 'moss'],
+    callPool: [], marked: null,
     };
 
     const record: GameRecord = {
@@ -253,6 +256,7 @@ describe('viableRoomsAt', () => {
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'bed_clem',
       },
       reporters: [...ROSTER],
+  callPool: [], marked: null,
     };
 
     const record: GameRecord = {
@@ -307,6 +311,7 @@ describe('viableRoomsAt', () => {
       wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
     },
     reporters: ['bell', 'wren', 'sparrow', 'moss'],
+    callPool: [], marked: null,
     ...over,
   });
 
@@ -358,6 +363,7 @@ describe('viableRoomsAt', () => {
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
       },
       reporters: ['bell', 'pike', 'wren', 'sparrow', 'moss'],
+    callPool: [], marked: null,
     });
 
     const result = viableRoomsAt(bellRecord(night), 3);
@@ -404,6 +410,7 @@ describe('viableRoomsAt', () => {
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'attic',
       },
       reporters: ['bell', 'wren', 'sparrow', 'moss'],
+    callPool: [], marked: null,
     };
 
     const result = viableRoomsAt(bellRecord(night), 3);
@@ -477,6 +484,7 @@ describe('solve', () => {
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'bed_moss',
       },
       reporters: [...ROSTER],
+  callPool: [], marked: null,
     };
 
     const record: GameRecord = {

@@ -12,7 +12,8 @@ const knowledge = (over: Partial<Knowledge> = {}): Knowledge => {
   const s = createGame(makeConfig(), makeRng(1));
   return {
     me: 'bell', isVillain: false, night: 3, position: 'bed_bell', held: [],
-    lit: { ...s.lit }, publicEvents: [], mySightings: [], claims: [],
+    lit: { ...s.lit }, lanternRooms: [...s.lanternRooms],
+    publicEvents: [], mySightings: [], claims: [],
     activeCall: null, config: s.config, ...over,
   };
 };

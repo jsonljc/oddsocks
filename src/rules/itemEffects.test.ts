@@ -42,6 +42,7 @@ describe('the Keyhole', () => {
     s.history.push({
       night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen', moss: 'kitchen' },
       events: [], sightings: {}, claims: {}, reporters: [],
+      callPool: [], marked: null,
     });
     const events = applyItemUses(s, [
       { kind: 'keyhole', spender: 'pike', room: 'kitchen', night: 2 }]);
@@ -55,6 +56,7 @@ describe('the Keyhole', () => {
     s.history.push({
       night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen' },
       events: [], sightings: {}, claims: {}, reporters: [],
+      callPool: [], marked: null,
     });
     const events = applyItemUses(s, [{ kind: 'keyhole', spender: 'pike', room: 'attic', night: 2 }]);
     expect((events[0] as { occupants: string[] }).occupants).toEqual([]);
@@ -66,6 +68,7 @@ describe('the Keyhole', () => {
     s.history.push({
       night: 2, duskPositions: {}, midnightPositions: { bell: 'kitchen' },
       events: [], sightings: {}, claims: {}, reporters: [],
+      callPool: [], marked: null,
     });
     expect(() => applyItemUses(s, [{ kind: 'keyhole', spender: 'pike', room: 'kitchen', night: 6 }]))
       .toThrow(/no record of night/i);

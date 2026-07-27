@@ -4,7 +4,7 @@ import type { DuskAction, MidnightAction, MorningAction } from '../rules/night.j
 import type { PublicEvent } from '../rules/state.js';
 import { distance, isBedroom, legalPaths, ownerOf } from '../rules/map.js';
 import { reachableInFourHops } from '../analysis/safeLies.js';
-import type { Bot, Knowledge } from './types.js';
+import { isLitFor, type Bot, type Knowledge } from './types.js';
 
 /** Trail namings are the only people-facts the house produces, so they drive suspicion. */
 export function suspicionFrom(k: Knowledge): Record<PlayerId, number> {
@@ -32,7 +32,7 @@ const looseItemRooms = (k: Knowledge): RoomId[] => {
 
 const litBedrooms = (k: Knowledge): RoomId[] =>
   Object.keys(k.config.house.rooms)
-    .filter((r) => isBedroom(k.config.house, r) && k.lit[r] === true);
+    .filter((r) => isBedroom(k.config.house, r) && isLitFor(k, r));
 
 /** Stable order for a candidate list of paths, so `rng.pick` stays reproducible
  *  from seed regardless of how the list was assembled. */
@@ -74,7 +74,7 @@ export const heuristicBot: Bot = {
       const myBed = `bed_${k.me}`;
       const path = bestPath(k, rng, (dest) => {
         if (dest === forbidden) return -100;
-        if (!isBedroom(k.config.house, dest) || k.lit[dest] !== true) return 0;
+        if (!isBedroom(k.config.house, dest) || !isLitFor(k, dest)) return 0;
         return ownerOf(k.config.house, dest) === k.me ? 1 : 20;
       });
       // Self-snuffing is a deliberate policy, not a coincidence of ending up
@@ -82,7 +82,10 @@ export const heuristicBot: Bot = {
       // (!selfSnuffCostsNight buys claim-immunity at no cost in nights), and
       // it can only ever happen once — a bedroom that's already dark can't be
       // snuffed again, which this reads directly off the public lit state
-      // rather than needing any memory of a prior decision.
+      // rather than needing any memory of a prior decision. Deliberately the
+      // raw map and not `isLitFor`: the question is whether my own light is
+      // still alive, and a Lantern borrowing it back for one night does not
+      // revive it, the same distinction `darkBedroomCount` makes.
       const snuffOwn = !k.config.selfSnuffCostsNight && k.night > 1 &&
         path[1] === myBed && k.lit[myBed] === true;
       return { path, joinCall: false, snuffOwn };

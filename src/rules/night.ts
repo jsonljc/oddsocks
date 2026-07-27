@@ -8,7 +8,7 @@ import { resolveTheft, type TheftOutcome } from './theft.js';
 import { resolveMarking } from './marking.js';
 import { spawnItems, resolvePickups, processReturns } from './items.js';
 import { applyItemUses, resolveBellWatch, clearNightlyItemEffects, type ItemUse } from './itemEffects.js';
-import { canPostCall, postCall, resolveCall } from './call.js';
+import { canJoinCall, canPostCall, postCall, resolveCall } from './call.js';
 import { resolveOddities } from './oddities.js';
 
 export interface DuskAction { path: Path; pickUp: boolean }
@@ -35,6 +35,8 @@ export interface MidnightResult {
   theft: TheftOutcome;
   marked: PlayerId | null;
   caught: boolean;
+  /** Who could have joined tonight's Call, taken before one spends their items. */
+  callPool: PlayerId[];
 }
 
 const NO_THEFT: TheftOutcome = { stole: false, selfSnuff: false, victim: null, room: null, events: [] };
@@ -85,6 +87,11 @@ export function runMidnight(
 
   const active = state.night > 1;
 
+  // The pool a Call can draw on, read before one resolves and spends the items
+  // out of it. Marking is what removes a hand from here, and tonight's marking
+  // has not happened yet — which is right, since a Call resolves first.
+  const callPool = state.config.roster.filter((p) => canJoinCall(state, p));
+
   // 2. Calls — before the theft, so a landed trap saves the light.
   let caught = false;
   if (active && state.activeCall) {
@@ -120,7 +127,10 @@ export function runMidnight(
     thiefDuskRoom: theft.stole ? (dusk.positions[state.villain] ?? null) : null,
   }));
 
-  return { positions: moved.positions, steps: moved.steps, events, sightings, theft, marked, caught };
+  return {
+    positions: moved.positions, steps: moved.steps, events, sightings,
+    theft, marked, caught, callPool,
+  };
 }
 
 /**

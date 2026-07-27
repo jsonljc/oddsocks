@@ -30,9 +30,10 @@ describe('measure', () => {
   });
 
   it('never reports more thefts than active nights', () => {
-    const c = makeConfig();
+    // Night 1 is safe, so the active nights are every other night on the clock.
+    const activeNights = makeConfig().totalNights - 1;
     for (let seed = 0; seed < 60; seed++) {
-      expect(measure(play(seed)).thefts).toBeLessThanOrEqual(c.activeNights);
+      expect(measure(play(seed)).thefts).toBeLessThanOrEqual(activeNights);
     }
   });
 
@@ -91,18 +92,63 @@ describe('measure', () => {
     expect(sawSelfSnuff).toBe(true);
   });
 
-  // thefts <= activeNights and markings >= 0 individually are both satisfiable
-  // by a broken measure() (e.g. markings := thefts, or markings := activeNights
-  // outright) as long as neither goes negative — the non-negativity clamp in
-  // the implementation would hide exactly that regression. Pin the exact
-  // identity instead, using only g.nights.length (never measure()'s own
-  // internals): night 1 is always safe, so every other night played is active
-  // and lands in exactly one of these two buckets, no third option.
-  it('splits every active night exactly between a theft and a marking', () => {
+  // `markings` used to be derived as `activeNights - thefts`, on the stated
+  // grounds that an active night with no theft must have been a marking. There
+  // is a third option, and it is the common one: the villain ends midnight with
+  // no lit bedroom to rob and no company in the dark, and nothing happens at
+  // all. Pin markings against the record's own field, and require the two
+  // measures to actually disagree somewhere in the sample — otherwise this test
+  // would pass just as happily on the derivation it replaced.
+  it('counts exactly the nights the villain marked somebody', () => {
+    let sawSubtractionDisagree = false;
+    let totalMarkings = 0;
     for (let seed = 0; seed < 60; seed++) {
       const g = play(seed);
       const m = measure(g);
-      expect(m.thefts + m.markings).toBe(g.nights.length - 1);
+      expect(m.markings).toBe(g.nights.filter((n) => n.marked !== null).length);
+      totalMarkings += m.markings;
+      if (m.thefts + m.markings !== g.nights.length - 1) sawSubtractionDisagree = true;
     }
+    expect(totalMarkings).toBeGreaterThan(0);
+    expect(sawSubtractionDisagree).toBe(true);
+  });
+
+  // Spec §6.2 #6 asks for the pool that can physically join a Call: a stock.
+  // Counting `itemTaken` events answers a different question (how many people
+  // picked something up tonight) and, because an item stays in the hand that
+  // took it, a much smaller one.
+  it('reports the Call-eligible pool as a stock, not a night\'s pickups', () => {
+    let poolTotal = 0, pickupTotal = 0, nights = 0;
+    for (let seed = 0; seed < 40; seed++) {
+      const g = play(seed);
+      const expected = g.nights.reduce((n, x) => n + x.callPool.length, 0) / g.nights.length;
+      expect(measure(g).meanCallPool).toBeCloseTo(expected, 9);
+
+      for (const night of g.nights) {
+        nights++;
+        poolTotal += night.callPool.length;
+        pickupTotal += new Set(night.events
+          .filter((e) => e.t === 'itemTaken')
+          .map((e) => (e as { player: string }).player)).size;
+      }
+    }
+    // The stock is strictly the larger measure, and it clears the two hands a
+    // Call needs on average — which the pickup flow does not.
+    expect(poolTotal / nights).toBeGreaterThan(pickupTotal / nights);
+    expect(poolTotal / nights).toBeGreaterThan(makeConfig().callHandsRequired);
+  });
+
+  // Spec §6.2 #7, never implemented until now: a live Call the target simply
+  // walked away from.
+  it('counts a dodge as a live Call the named child did not attend', () => {
+    let total = 0;
+    for (let seed = 0; seed < 60; seed++) {
+      const g = play(seed);
+      const expected = g.nights.reduce((n, x) => n + x.events
+        .filter((e) => e.t === 'callResolved' && e.outcome === 'noShow').length, 0);
+      expect(measure(g).dodges).toBe(expected);
+      total += expected;
+    }
+    expect(total).toBeGreaterThan(0);
   });
 });

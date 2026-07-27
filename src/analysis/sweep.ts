@@ -53,7 +53,18 @@ export interface SweepResult {
   trailAccuracy: number;
   callsPostedPerGame: number;
   callsLivePerGame: number;
-  meanItemHolders: number;
+  /** Live Calls the target walked away from, per game — spec §6.2 #7. */
+  dodgesPerGame: number;
+  /** Live Calls that caught the villain, per game. Structurally 0 against any
+   *  villain that notices its own name; kept because §6.2 #5 asks for it. */
+  callsCaughtPerGame: number;
+  /** Nights the villain marked somebody, per game. */
+  markingsPerGame: number;
+  /** Self-snuffs per game — the Hush exploit's own tempo cost, or lack of it. */
+  selfSnuffsPerGame: number;
+  /** Mean players per night holding an item and unmarked: the pool a Call can
+   *  physically draw its hands from. Compare against `callHandsRequired`. */
+  meanCallPool: number;
   encounterRate: number;
 }
 
@@ -113,7 +124,11 @@ export function runSweep(cells: readonly SweepCell[], seedBase = 0): SweepResult
       trailAccuracy: namings > 0 ? hits / namings : 0,
       callsPostedPerGame: mean(all.map((m) => m.callsPosted)),
       callsLivePerGame: mean(all.map((m) => m.callsLive)),
-      meanItemHolders: mean(all.map((m) => m.meanItemHolders)),
+      dodgesPerGame: mean(all.map((m) => m.dodges)),
+      callsCaughtPerGame: mean(all.map((m) => m.callsCaught)),
+      markingsPerGame: mean(all.map((m) => m.markings)),
+      selfSnuffsPerGame: mean(all.map((m) => m.selfSnuffs)),
+      meanCallPool: mean(all.map((m) => m.meanCallPool)),
       encounterRate: mean(all.map((m) => m.encounterRate)),
     };
   });

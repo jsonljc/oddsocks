@@ -16,7 +16,11 @@ const COLUMNS: { key: keyof SweepResult; head: string; width: number }[] = [
   { key: 'trailAccuracy', head: 'trailAcc', width: 9 },
   { key: 'callsPostedPerGame', head: 'posted', width: 7 },
   { key: 'callsLivePerGame', head: 'live', width: 6 },
-  { key: 'meanItemHolders', head: 'holders', width: 8 },
+  { key: 'dodgesPerGame', head: 'dodges', width: 7 },
+  { key: 'callsCaughtPerGame', head: 'callCgt', width: 8 },
+  { key: 'meanCallPool', head: 'pool', width: 6 },
+  { key: 'markingsPerGame', head: 'marks', width: 6 },
+  { key: 'selfSnuffsPerGame', head: 'snuffs', width: 7 },
   { key: 'encounterRate', head: 'encntr', width: 7 },
 ];
 

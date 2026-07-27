@@ -26,7 +26,12 @@ export interface GameConfig {
   readonly roster: readonly PlayerId[];
 
   readonly lightsRequired: number;
-  readonly activeNights: number;
+  /**
+   * Nights on the clock. Night 1 is safe, and the villain gets exactly one
+   * spare active night, so this is `lightsRequired + 2`. There is deliberately
+   * no separate `activeNights` field: two numbers with no enforced relation is
+   * a footgun, and only this one was ever read.
+   */
   readonly totalNights: number;
 
   readonly hushMode: HushMode;
@@ -53,7 +58,6 @@ export const DEFAULT_CONFIG: GameConfig = {
   roster: ROSTER,
 
   lightsRequired: 5,
-  activeNights: 6,
   totalNights: 7,
 
   hushMode: 'silent',
