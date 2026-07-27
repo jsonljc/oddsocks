@@ -83,11 +83,11 @@ describe('viableRoomsAt', () => {
         wren: 'bed_wren', sparrow: 'bed_sparrow', moss: 'kitchen',
       },
       events: [
-        { t: 'reported', player: 'pike', room: 'bed_pike', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'moss', room: 'kitchen', named: ['bell'], others: 1, lit: true },
+        { t: 'reported', player: 'pike', room: 'bed_pike', named: [], others: 0, lit: true, night: 1 },
+        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 0, lit: true, night: 1 },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 1 },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 1 },
+        { t: 'reported', player: 'moss', room: 'kitchen', named: ['bell'], others: 1, lit: true, night: 1 },
         // No 'reported' event for bell — the Hush silenced them.
       ],
       sightings: {
@@ -145,12 +145,12 @@ describe('viableRoomsAt', () => {
         { t: 'oddity', source: 'clem', detail: 'itemHolders', payload: { count: 0 } },
         // Nobody is Hushed in this isolated fixture, so every child reports —
         // the solver now reads these, not `sightings`, for witness testimony.
-        { t: 'reported', player: 'bell', room: 'bed_bell', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'pike', room: 'bed_pike', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 1, lit: false },
-        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'moss', room: 'bed_clem', named: ['clem'], others: 1, lit: false },
+        { t: 'reported', player: 'bell', room: 'bed_bell', named: [], others: 0, lit: true, night: 2 },
+        { t: 'reported', player: 'pike', room: 'bed_pike', named: [], others: 0, lit: true, night: 2 },
+        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 1, lit: false, night: 2 },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 2 },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 2 },
+        { t: 'reported', player: 'moss', room: 'bed_clem', named: ['clem'], others: 1, lit: false, night: 2 },
       ],
       sightings: {
         bell: sighting('bed_bell', true, 0),
@@ -227,12 +227,12 @@ describe('solve', () => {
       events: [
         // Night 1 always precedes any theft, so nobody could yet be Hushed —
         // every child reports, matching their sighting exactly.
-        { t: 'reported', player: 'bell', room: 'bed_wren', named: ['pike', 'wren'], others: 2, lit: true },
-        { t: 'reported', player: 'pike', room: 'bed_wren', named: ['bell', 'wren'], others: 2, lit: true },
-        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'wren', room: 'bed_wren', named: ['bell', 'pike'], others: 2, lit: true },
-        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true },
-        { t: 'reported', player: 'moss', room: 'bed_moss', named: [], others: 0, lit: true },
+        { t: 'reported', player: 'bell', room: 'bed_wren', named: ['pike', 'wren'], others: 2, lit: true, night: 1 },
+        { t: 'reported', player: 'pike', room: 'bed_wren', named: ['bell', 'wren'], others: 2, lit: true, night: 1 },
+        { t: 'reported', player: 'clem', room: 'bed_clem', named: [], others: 0, lit: true, night: 1 },
+        { t: 'reported', player: 'wren', room: 'bed_wren', named: ['bell', 'pike'], others: 2, lit: true, night: 1 },
+        { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 1 },
+        { t: 'reported', player: 'moss', room: 'bed_moss', named: [], others: 0, lit: true, night: 1 },
       ],
       sightings: {
         bell: sighting('bed_wren', true, 2, ['pike', 'wren']),

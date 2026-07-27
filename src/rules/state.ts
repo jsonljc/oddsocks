@@ -35,7 +35,7 @@ export type PublicEvent =
   | { t: 'lantern'; spender: PlayerId; room: RoomId }
   | { t: 'eyesOpen'; player: PlayerId; reason: string }
   | { t: 'reported'; player: PlayerId; room: RoomId; named: PlayerId[];
-      others: number; lit: boolean };
+      others: number; lit: boolean; night: number };
 
 export interface NightRecord {
   night: number;

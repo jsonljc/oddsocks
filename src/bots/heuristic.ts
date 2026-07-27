@@ -34,6 +34,11 @@ const litBedrooms = (k: Knowledge): RoomId[] =>
   Object.keys(k.config.house.rooms)
     .filter((r) => isBedroom(k.config.house, r) && k.lit[r] === true);
 
+/** Stable order for a candidate list of paths, so `rng.pick` stays reproducible
+ *  from seed regardless of how the list was assembled. */
+const sortPaths = (paths: readonly Path[]): Path[] =>
+  [...paths].sort((a, b) => `${a[0]}|${a[1]}`.localeCompare(`${b[0]}|${b[1]}`));
+
 /** Pick the legal path whose destination scores best; ties broken by the rng. */
 function bestPath(k: Knowledge, rng: Rng, score: (dest: RoomId) => number): Path {
   const paths = legalPaths(k.config.house, k.position);
@@ -44,7 +49,7 @@ function bestPath(k: Knowledge, rng: Rng, score: (dest: RoomId) => number): Path
     if (v > best) { best = v; pool = [p]; }
     else if (v === best) pool.push(p);
   }
-  return rng.pick(pool);
+  return rng.pick(sortPaths(pool));
 }
 
 export const heuristicBot: Bot = {
@@ -92,7 +97,7 @@ export const heuristicBot: Bot = {
     if (call && call.target === k.me && call.selfNominated) {
       const reaching = legalPaths(k.config.house, k.position).filter((p) => p[1] === call.room);
       if (reaching.length > 0) {
-        return { path: rng.pick(reaching), joinCall: false, snuffOwn: false };
+        return { path: rng.pick(sortPaths(reaching)), joinCall: false, snuffOwn: false };
       }
     }
 
@@ -109,7 +114,7 @@ export const heuristicBot: Bot = {
     if (willJoin && call) {
       const reaching = legalPaths(k.config.house, k.position).filter((p) => p[1] === call.room);
       if (reaching.length > 0) {
-        return { path: rng.pick(reaching), joinCall: true, snuffOwn: false };
+        return { path: rng.pick(sortPaths(reaching)), joinCall: true, snuffOwn: false };
       }
     }
 
@@ -163,18 +168,21 @@ export const heuristicBot: Bot = {
  * in the set, so this never becomes an illegal claim.
  */
 function villainClaim(k: Knowledge, rng: Rng): RoomId {
-  // Only each witness's freshest report counts — an older report a witness
-  // has since superseded constrains nothing about tonight (and `publicEvents`
-  // never even contains tonight's own reports, only nights 1..N-1's).
-  type Reported = Extract<PublicEvent, { t: 'reported' }>;
-  const latest = new Map<PlayerId, Reported>();
-  for (const e of k.publicEvents) {
-    if (e.t === 'reported' && e.player !== k.me) latest.set(e.player, e);
-  }
-  const reports = [...latest.values()];
+  const myBed = `bed_${k.me}`;
 
-  // A witness's most recent word already naming me in a lit room makes lying
-  // pointless — the truth is already the freshest thing on the record.
+  // Only reports from the night just resolved count — an older naming
+  // constrains nothing about tonight, even if the witness who made it has
+  // since gone silent (Hushed) and so never gets superseded. `publicEvents`
+  // never contains tonight's own reports either way (nights 1..N-1 only), so
+  // "the night just resolved" is the freshest testimony that can exist.
+  type Reported = Extract<PublicEvent, { t: 'reported' }>;
+  const lastNight = k.night - 1;
+  const reports = k.publicEvents.filter(
+    (e): e is Reported => e.t === 'reported' && e.player !== k.me && e.night === lastNight,
+  );
+
+  // A witness's report from last night already naming me in a lit room makes
+  // lying pointless — the truth is already on the record.
   if (reports.some((e) => e.lit && e.named.includes(k.me))) return k.position;
 
   const refuted = new Set<RoomId>();
@@ -196,9 +204,15 @@ function villainClaim(k: Knowledge, rng: Rng): RoomId {
     }
   }
 
+  // Reachability anchors on my own *public story* — what I claimed last
+  // night (or, on night 1, the bedroom everyone starts in, which is public
+  // knowledge) — not on my true position, which nobody else can check a
+  // distance against. This is the same anchor `solve`'s cross-night chain
+  // uses, just read from my own claim history instead of reconstructed.
+  const anchor = lastClaims?.[k.me] ?? myBed;
   const candidates = Object.keys(k.config.house.rooms)
     .filter((r) => !refuted.has(r))
-    .filter((r) => reachableInFourHops(k.config.house, k.position, r));
+    .filter((r) => reachableInFourHops(k.config.house, anchor, r));
 
   return candidates.length > 0 ? rng.pick(candidates.sort()) : k.position;
 }

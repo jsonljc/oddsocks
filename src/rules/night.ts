@@ -148,7 +148,7 @@ export function runMorning(
       reporters.push(p);
       events.push({
         t: 'reported', player: p, room: s.room, named: s.named,
-        others: s.others, lit: s.lit,
+        others: s.others, lit: s.lit, night: state.night,
       });
     }
     events.push(...applyItemUses(state, actions[p]!.itemUses));

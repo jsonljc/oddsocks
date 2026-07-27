@@ -29,6 +29,29 @@ describe('legality', () => {
       }
     }
   });
+
+  // The test above always sets activeCall: null, so it never drives the
+  // self-nomination or join-call branches through isLegalPath. Both are
+  // reachable from kitchen to bed_bell in one phase (see the villain tests'
+  // map comment below).
+  it('submits legal paths when honouring or joining an active self-nominated Call', () => {
+    const call = { caller: 'bell', target: 'bell', room: 'bed_bell', selfNominated: true };
+    for (let i = 0; i < 100; i++) {
+      const rng = makeRng(i);
+
+      const target = knowledge({
+        me: 'bell', position: 'kitchen', held: ['lantern'], activeCall: call,
+      });
+      expect(isLegalPath(target.config.house, target.position,
+        heuristicBot.midnight(target, rng).path)).toBe(true);
+
+      const joiner = knowledge({
+        me: 'pike', position: 'kitchen', held: ['lantern'], activeCall: call,
+      });
+      expect(isLegalPath(joiner.config.house, joiner.position,
+        heuristicBot.midnight(joiner, rng).path)).toBe(true);
+    }
+  });
 });
 
 describe('suspicion', () => {
@@ -71,17 +94,93 @@ describe('the villain', () => {
   });
 });
 
+describe('the villain\'s self-snuff policy', () => {
+  it('never self-snuffs when it would cost a night', () => {
+    for (let seed = 0; seed < 300; seed++) {
+      const record = playGame(makeConfig(), seed, bots);
+      for (const night of record.nights) {
+        for (const e of night.events) {
+          if (e.t === 'theft') expect(e.victim).not.toBe(record.villain);
+        }
+      }
+    }
+  });
+
+  it('self-snuffs at most once per game when it is free', () => {
+    let total = 0;
+    for (let seed = 0; seed < 300; seed++) {
+      const record = playGame(makeConfig({ selfSnuffCostsNight: false }), seed, bots);
+      let count = 0;
+      for (const night of record.nights) {
+        for (const e of night.events) {
+          if (e.t === 'theft' && e.victim === record.villain) count++;
+        }
+      }
+      expect(count).toBeLessThanOrEqual(1);
+      total += count;
+    }
+    // Proves the mechanic actually fires somewhere in the sweep, not just
+    // that it never over-fires — an accidentally-disabled policy would also
+    // pass the per-game bound above.
+    expect(total).toBeGreaterThan(0);
+  });
+});
+
+describe('the villain claim', () => {
+  it('is pinned to the truth when a witness named me last night', () => {
+    const k = knowledge({
+      isVillain: true, me: 'moss', night: 5, position: 'attic',
+      publicEvents: [
+        { t: 'reported', player: 'pike', room: 'bed_wren', named: ['moss'], others: 1, lit: true, night: 4 },
+      ],
+    });
+    for (let i = 0; i < 10; i++) {
+      expect(heuristicBot.morning(k, makeRng(i)).claim).toBe('attic');
+    }
+  });
+
+  it('is not stuck on the truth once a naming is more than one night stale', () => {
+    // Same naming as above, but from night 2 — three nights before this
+    // night-5 decision, not the one night just resolved. Under the original
+    // bug (any historical naming, forever) this would still force the truth
+    // every time; under the "latest per witness" bug this fix's own review
+    // caught (a Hushed witness's stale naming stays "freshest" forever), it
+    // would too. Neither applies once scoping is exact-night.
+    const k = knowledge({
+      isVillain: true, me: 'moss', night: 5, position: 'attic',
+      publicEvents: [
+        { t: 'reported', player: 'pike', room: 'bed_wren', named: ['moss'], others: 1, lit: true, night: 2 },
+      ],
+    });
+    const claims = new Set<string | null>();
+    for (let i = 0; i < 30; i++) {
+      claims.add(heuristicBot.morning(k, makeRng(i)).claim);
+    }
+    // A still-forced claim would deterministically return the true position
+    // on every seed, with zero variation.
+    expect(claims.size).toBeGreaterThan(1);
+  });
+});
+
 describe('whole games', () => {
-  it('produces Calls that actually go live at least sometimes', () => {
+  it('produces Calls that go live and sometimes clear an innocent child', () => {
+    // outcome !== 'fizzled' alone is a weak guard: 'noShow' satisfies it just
+    // as well as 'cleared' does, and did, before self-nomination existed —
+    // this passed on the un-fixed bot because the villain's own dodge always
+    // produced noShow. Assert 'cleared' specifically.
     let live = 0;
+    let cleared = 0;
     for (let seed = 0; seed < 120; seed++) {
       for (const night of playGame(makeConfig(), seed, bots).nights) {
         for (const e of night.events) {
-          if (e.t === 'callResolved' && e.outcome !== 'fizzled') live++;
+          if (e.t !== 'callResolved') continue;
+          if (e.outcome !== 'fizzled') live++;
+          if (e.outcome === 'cleared') cleared++;
         }
       }
     }
     expect(live).toBeGreaterThan(0);
+    expect(cleared).toBeGreaterThan(0);
   });
 
   it('terminates for every seed', () => {
