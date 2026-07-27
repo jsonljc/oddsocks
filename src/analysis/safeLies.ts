@@ -48,7 +48,7 @@ export function reachableInFourHops(house: House, from: RoomId, to: RoomId): boo
 }
 
 /** Every `reported` event of one night that counts as third-party testimony:
- *  the villain's own is never evidence against themselves, and under R18 its
+ *  the villain's own is never evidence against themselves, and under R19 its
  *  room is their claim, which may be a lie. */
 const testimonyOf = (record: GameRecord, n: NightRecord) => n.events
   .filter((e): e is Extract<PublicEvent, { t: 'reported' }> => e.t === 'reported')

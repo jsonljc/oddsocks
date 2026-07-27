@@ -295,7 +295,7 @@ describe('viableRoomsAt', () => {
       { t: 'reported', player: 'bell', room: 'west_hall', named: [], others: 0, lit: true, night: 3 },
       { t: 'reported', player: 'wren', room: 'bed_wren', named: [], others: 0, lit: true, night: 3 },
       { t: 'reported', player: 'sparrow', room: 'bed_sparrow', named: [], others: 0, lit: true, night: 3 },
-      // The villain reports the room they claimed, naming nobody (see R18).
+      // The villain reports the room they claimed, naming nobody (see R19).
       { t: 'reported', player: 'moss', room: 'attic', named: [], others: 0, lit: true, night: 3 },
     ],
     sightings: {
