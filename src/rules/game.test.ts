@@ -8,11 +8,12 @@ import { randomBot } from '../bots/random.js';
 const bots = Object.fromEntries(ROSTER.map((p) => [p, randomBot]));
 const play = (seed: number, over = {}) => playGame(makeConfig(over), seed, bots);
 
-// randomBot always submits `snuffOwn: false` — it can never trigger a genuine
-// self-snuff, which makes the `overrun` filter in the test below always empty
-// and its assertions vacuous. This bot stays home every phase and deliberately
-// snuffs its own light the moment it's the villain and it's legal to (night 2
-// onward — night 1 is safe), so the free-self-snuff overrun actually fires.
+// randomBot hardcodes `snuffOwn: false` (src/bots/random.ts) — it can never
+// trigger a genuine self-snuff. Testing the free-self-snuff-extends-the-
+// deadline rule needs a bot that actually opts into one, so no sweep over
+// `bots` (all randomBot) below can exercise this path. This bot stays home
+// every phase and deliberately snuffs its own light the moment it's the
+// villain and it's legal to (night 2 onward — night 1 is safe).
 const stayHomeAndSelfSnuff: Bot = {
   dusk(k) {
     const home = k.position;
@@ -76,31 +77,22 @@ describe('playGame', () => {
 
   it('extends the deadline by one night when a free self-snuff happens', () => {
     // With selfSnuffCostsNight false, a villain who snuffs their own light does
-    // not spend a night on it, so the game may run one night past totalNights.
-    const c = makeConfig({ selfSnuffCostsNight: false });
-    const overrun = Array.from({ length: 200 }, (_, i) => playGame(c, i, bots))
-      .filter((g) => g.nights.length > c.totalNights);
-    for (const g of overrun) {
-      expect(g.nights.length).toBe(c.totalNights + 1);
-      // A self-snuff is publicly identical to a theft (R16): it never gets its own
-      // event type, only a 'theft' event whose victim is the villain themself.
-      expect(g.nights.some((n) =>
-        n.events.some((e) => e.t === 'theft' && e.victim === g.villain))).toBe(true);
-    }
-  });
-
-  it('actually overruns on a deliberate self-snuff, so the test above is not vacuous', () => {
-    // With randomBot the `overrun` array above is always empty (see the note on
-    // stayHomeAndSelfSnuff), so that test's per-game assertions never execute.
-    // This drives the exact scenario directly: every player stays in their own
-    // lit bedroom forever, so no other light is ever at risk, and the villain
-    // self-snuffs the first legal chance (night 2). The game must then run
-    // exactly one night past the deadline and still end in survival.
+    // not spend a night on it, so the game runs one night past totalNights.
+    // stayHomeAndSelfSnuff drives this directly: every player stays in their
+    // own lit bedroom forever, so no other light is ever at risk, and the
+    // villain self-snuffs at the first legal chance (night 2) — an earlier
+    // version of this test swept `bots` (all randomBot) instead, but since
+    // randomBot can never submit snuffOwn: true, that sweep's overrun set was
+    // always empty and its assertions never ran. This bot makes the overrun
+    // happen on every seed, so the assertions below are load-bearing.
     const c = makeConfig({ selfSnuffCostsNight: false });
     for (let seed = 0; seed < 20; seed++) {
       const g = playGame(c, seed, stayBots);
       expect(g.nights.length).toBe(c.totalNights + 1);
       expect(g.outcome).toEqual({ winner: 'children', how: 'survived' });
+      // A self-snuff is publicly identical to a theft (R16): it never gets its
+      // own event type, only a 'theft' event whose victim is the villain
+      // themself.
       expect(g.nights[1]!.events.some((e) => e.t === 'theft' && e.victim === g.villain)).toBe(true);
     }
   });
