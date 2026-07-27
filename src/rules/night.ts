@@ -37,7 +37,7 @@ export interface MidnightResult {
   caught: boolean;
 }
 
-const NO_THEFT: TheftOutcome = { stole: false, victim: null, room: null, events: [] };
+const NO_THEFT: TheftOutcome = { stole: false, selfSnuff: false, victim: null, room: null, events: [] };
 
 export function runDusk(
   state: GameState,
@@ -100,7 +100,7 @@ export function runMidnight(
   if (active && !caught) {
     theft = resolveTheft(state, moved.positions, actions[state.villain]!.snuffOwn, rng);
     events.push(...theft.events);
-    if (!theft.stole && theft.events.length === 0) {
+    if (!theft.stole) {
       marked = resolveMarking(state, moved.positions, rng).marked;
     }
   }

@@ -151,10 +151,14 @@ describe('marking through runMidnight', () => {
       sparrow: { path: ['sewing_room', 'bed_moss'], joinCall: false, snuffOwn: false },
     }, makeRng(1));
 
-    expect(mid.theft.stole).toBe(false);
-    expect(mid.theft.events).toEqual([{ t: 'selfSnuff', room: 'bed_moss' }]);
-    // The self-snuff already produced an event, so the marking gate — which
-    // requires *no* theft event, not merely no theft — must stay shut.
+    expect(mid.theft.stole).toBe(true);
+    expect(mid.theft.selfSnuff).toBe(true);
+    expect(mid.theft.events).toEqual([
+      { t: 'theft', room: 'bed_moss', victim: 'moss' },
+      { t: 'trail', room: 'bed_moss', player: expect.any(String) },
+    ]);
+    // A self-snuff now reports stole:true, same as a theft, so the simplified
+    // marking gate (`!theft.stole` alone) must still stay shut.
     expect(mid.marked).toBeNull();
     expect(s.marked['sparrow']).toBe(false);
   });

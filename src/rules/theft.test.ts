@@ -46,12 +46,16 @@ describe('resolveTheft', () => {
     const skipped = resolveTheft(s, { moss: 'bed_moss' }, false, makeRng(1));
     expect(s.lit['bed_moss']).toBe(true);
     expect(skipped.events).toEqual([]);
+    expect(skipped.selfSnuff).toBe(false);
 
     const done = resolveTheft(s, { moss: 'bed_moss' }, true, makeRng(1));
     expect(s.lit['bed_moss']).toBe(false);
     expect(s.hushedSince['moss']).toBe(2);
-    expect(done.events.some((e) => e.t === 'selfSnuff')).toBe(true);
-    expect(done.events.some((e) => e.t === 'trail')).toBe(false);
+    expect(done.selfSnuff).toBe(true);
+    const theftEvent = done.events.find((e) => e.t === 'theft');
+    expect(theftEvent).toBeDefined();
+    expect((theftEvent as { victim: string }).victim).toBe('moss');
+    expect(done.events.some((e) => e.t === 'trail')).toBe(true);
   });
 
   it('emits a trail naming someone within the trail radius', () => {
@@ -61,6 +65,35 @@ describe('resolveTheft', () => {
     const trail = out.events.find((e) => e.t === 'trail');
     expect(trail).toBeDefined();
     expect(['moss', 'bell']).toContain((trail as { player: string }).player);
+  });
+});
+
+describe('a self-snuff is publicly indistinguishable from a theft', () => {
+  it('reports stole:true and selfSnuff:true for a self-snuff, vs. stole:true and selfSnuff:false for a theft', () => {
+    const s = game('moss');
+    const selfSnuff = resolveTheft(s, { moss: 'bed_moss' }, true, makeRng(1));
+    expect(selfSnuff.stole).toBe(true);
+    expect(selfSnuff.selfSnuff).toBe(true);
+
+    const s2 = game('moss');
+    const theft = resolveTheft(s2, { moss: 'bed_bell', bell: 'kitchen' }, false, makeRng(1));
+    expect(theft.stole).toBe(true);
+    expect(theft.selfSnuff).toBe(false);
+  });
+
+  it('emits no event type that a theft-with-absent-victim night could not also emit', () => {
+    // The strongest form of the guarantee: the set of public event types from a
+    // self-snuff is a subset of the set from an ordinary theft where the victim
+    // was out (so neither branch produces a Grip either).
+    const s = game('moss');
+    const selfSnuff = resolveTheft(s, { moss: 'bed_moss' }, true, makeRng(1));
+
+    const s2 = game('moss');
+    const theft = resolveTheft(s2, { moss: 'bed_bell', bell: 'kitchen' }, false, makeRng(1));
+
+    const selfSnuffTypes = new Set(selfSnuff.events.map((e) => e.t));
+    const theftTypes = new Set(theft.events.map((e) => e.t));
+    for (const t of selfSnuffTypes) expect(theftTypes.has(t)).toBe(true);
   });
 });
 
@@ -96,6 +129,14 @@ describe('the Grip', () => {
     s.held['moss'] = ['keyhole'];
     resolveTheft(s, { moss: 'bed_bell', bell: 'kitchen', pike: 'bed_bell' }, false, makeRng(1));
     expect(s.held['pike']).toEqual([]);
+  });
+
+  it('never fires on a self-snuff, even though the villain is home in their own room holding an item', () => {
+    const s = game('moss');
+    s.held['moss'] = ['keyhole'];
+    const out = resolveTheft(s, { moss: 'bed_moss' }, true, makeRng(1));
+    expect(out.events.some((e) => e.t === 'grip')).toBe(false);
+    expect(s.held['moss']).toEqual(['keyhole']);
   });
 });
 

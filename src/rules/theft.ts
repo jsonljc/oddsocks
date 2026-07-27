@@ -6,16 +6,23 @@ import { isBedroom, ownerOf, roomsWithin } from './map.js';
 
 export interface TheftOutcome {
   stole: boolean;
+  /**
+   * Internal bookkeeping only — never surfaced in a `PublicEvent`. A self-snuff
+   * must be publicly identical to a theft (R16), so the orchestrator reads this
+   * off the outcome rather than the event log.
+   */
+  selfSnuff: boolean;
   victim: PlayerId | null;
   room: RoomId | null;
   events: PublicEvent[];
 }
 
-const NOTHING: TheftOutcome = { stole: false, victim: null, room: null, events: [] };
+const NOTHING: TheftOutcome = { stole: false, selfSnuff: false, victim: null, room: null, events: [] };
 
 /**
  * The villain's night action in a bedroom. Theft is automatic on entering another
- * child's lit bedroom (R10); snuffing your own light is declared (R11).
+ * child's lit bedroom (R10); snuffing your own light is declared (R11). Publicly
+ * the two are the same act — the house makes no distinction between them.
  */
 export function resolveTheft(
   state: GameState,
@@ -30,24 +37,20 @@ export function resolveTheft(
   const owner = ownerOf(house, room);
   if (!owner) return { ...NOTHING, events: [] };
 
-  // Their own light: optional, hushes them, and leaves no trail (R16).
-  if (owner === state.villain) {
-    if (!snuffOwn) return { ...NOTHING, events: [] };
-    state.lit[room] = false;
-    state.hushedSince[state.villain] = state.night;
-    return {
-      stole: false, victim: null, room,
-      events: [{ t: 'selfSnuff', room }],
-    };
-  }
+  // Their own light is optional, unlike a theft — but once taken, it is declared
+  // exactly like one (R16): same `theft` event, same trail, own name as victim.
+  const selfSnuff = owner === state.villain;
+  if (selfSnuff && !snuffOwn) return { ...NOTHING, events: [] };
 
-  const events: PublicEvent[] = [];
+  const victim = owner;
   state.lit[room] = false;
-  state.hushedSince[owner] = state.night;
-  events.push({ t: 'theft', room, victim: owner });
+  state.hushedSince[victim] = state.night;
+  const events: PublicEvent[] = [{ t: 'theft', room, victim }];
 
-  // The Grip: the owner alone, and only if they were home (R3).
-  if (midnight[owner] === room) {
+  // The Grip: the owner alone, only if they were home, and never on a self-snuff —
+  // the villain doesn't grab at themselves. This stays hidden because a theft
+  // where the victim was out also produces no Grip (R3).
+  if (!selfSnuff && midnight[owner] === room) {
     const carried = state.held[state.villain] ?? [];
     if (carried.length > 0) {
       const taken = rng.pick(carried);
@@ -64,7 +67,7 @@ export function resolveTheft(
   const witness = selectTrailWitness(state, room, midnight, rng);
   events.push({ t: 'trail', player: witness, room });
 
-  return { stole: true, victim: owner, room, events };
+  return { stole: true, selfSnuff, victim, room, events };
 }
 
 /** One child, chosen uniformly, who ended midnight within the trail radius (R2). */

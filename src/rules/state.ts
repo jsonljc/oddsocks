@@ -21,7 +21,6 @@ export interface Sighting {
 
 export type PublicEvent =
   | { t: 'theft'; room: RoomId; victim: PlayerId }
-  | { t: 'selfSnuff'; room: RoomId }
   | { t: 'trail'; player: PlayerId; room: RoomId }
   | { t: 'itemTaken'; player: PlayerId; item: ItemKind; room: RoomId }
   | { t: 'itemSpawned'; item: ItemKind; room: RoomId }
