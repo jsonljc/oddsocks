@@ -8,7 +8,7 @@ import { resolveTheft, type TheftOutcome } from './theft.js';
 import { resolveMarking } from './marking.js';
 import { spawnItems, resolvePickups, processReturns } from './items.js';
 import { applyItemUses, resolveBellWatch, clearNightlyItemEffects, type ItemUse } from './itemEffects.js';
-import { postCall, resolveCall } from './call.js';
+import { canPostCall, postCall, resolveCall } from './call.js';
 import { resolveOddities } from './oddities.js';
 
 export interface DuskAction { path: Path; pickUp: boolean }
@@ -144,7 +144,10 @@ export function runMorning(
   let posted = 0;
   for (const p of state.config.roster) {
     const call = actions[p]!.call;
-    if (call && posted < state.config.maxCallsPerNight) {
+    // A bot proposing an illegal room (common, or a bedroom already dark) is a
+    // strategy error, not a caller bug — skip it silently, and don't let it
+    // consume the maxCallsPerNight slot a legal Call from someone else could use.
+    if (call && posted < state.config.maxCallsPerNight && canPostCall(state, call.target, call.room)) {
       events.push(...postCall(state, call));
       posted++;
     }
