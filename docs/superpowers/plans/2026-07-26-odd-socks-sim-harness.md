@@ -17,10 +17,33 @@
 - **Everything pure.** Nothing under `src/rules/` may perform I/O, read the clock, or call `Math.random()`. All randomness arrives as an injected `Rng`.
 - **Every tunable lives in `GameConfig`.** No magic numbers in engine code. A sweep must be a parameter matrix, never a code edit.
 - **TypeScript strict mode on.** `strict: true`, `noUncheckedIndexedAccess: true`.
+- **`npm test` type-checks before it runs tests** (`tsc --noEmit && vitest run`, set up in Task 3).
+  Vitest strips types with esbuild and never checks them, so without this the compiler is never
+  invoked by anything automated and strict mode catches nothing on its own.
 - **Six-child roster:** `bell`, `pike`, `clem`, `wren`, `sparrow`, `moss`. These exact lowercase ids are used as `PlayerId` throughout.
 - **Bedroom ids** are `bed_<playerId>`, e.g. `bed_bell`.
 - **Numbers for six players:** 5 lights required, 6 active nights, 7 nights total, night 1 safe.
 - **Commit after every task.** Conventional commit messages (`feat:`, `test:`, `chore:`).
+
+## Amendments made during execution
+
+Review found these defects in the plan itself. The code below still shows the original in places;
+where they disagree, **this list governs**.
+
+| Where | Change | Why |
+|---|---|---|
+| Task 1 / Task 3 | `npm test` runs `tsc --noEmit && vitest run` | Vitest strips types with esbuild and never checks them, so strict mode caught nothing and a `@ts-expect-error` proved nothing. |
+| Task 3 | Every `GameConfig` field `readonly`, nested containers `Readonly<>` | `makeConfig`'s shallow spread shares `itemCounts`/`layers` with `DEFAULT_CONFIG`; one in-place write would corrupt every later game in the process, silently. |
+| Task 3 | `itemsCanBeDropped` deleted | Declared and read by nothing. Add it back when something reads it. |
+| Task 4 | `lanternRoom: RoomId \| null` → `lanternRooms: RoomId[]`; `bellWatch: PlayerId \| null` → `bellWatches: { spender; target }[]`; `isLit` checks membership | Two Lanterns are in the default pool, so two spent in one morning is ordinary play. As scalars, the second silently voided the first while both spenders paid. |
+| Task 4 | `PublicEvent` gains `{ t: 'bellCast'; spender; target }` | The rules make spending a Bell public, and the named child *knowing* they are watched is the point of the item. Without it a Belled villain cannot dodge, and the sweep would measure the Bell as stronger than it is. |
+| Task 5 | `resolveMovement` also throws on a `paths` key absent from `from` | Validation was one-directional; the extra submission was silently dropped rather than failing loud. |
+| Task 10 | Keyhole throws on a night with no record, *before* charging the spender | An unfindable night produced `occupants: []`, indistinguishable from a genuinely empty room — in the one mechanism whose job is catching liars. |
+| Task 10 | `resolveBellWatch` credits the real caster and throws on a missing midnight position | `spender` was hardcoded to the watched child, so it was wrong on every emission. |
+| Tasks 4, 7, 13 | **A self-snuff is now publicly identical to a theft**: the `selfSnuff` event is deleted, a self-snuff emits the same `theft` event and the same trail, and `TheftOutcome` gains an internal `selfSnuff: boolean` that never reaches a player. R16 is reversed. | The event named the villain's own bedroom, so `ownerOf(room)` identified them outright — and even renamed, the missing trail was a perfect tell. §4 of the rules calls a self-snuff "excellent cover"; as built it was instant suicide, and the Hush exploit the sweep exists to measure could never have fired. |
+| Tasks 16, 17 | The solver reads `reported` events, not ground-truth `sightings`; constraints tightened to exact-four-hop reachability, Pike's floor crossing, a live Keyhole scan, and a certain-lower-bound holdings check | The Hush silences *both* halves of a snuffed child's voice, so reading raw sightings credited the children with testimony that could never have been given — 557 instances per 2000 games, concentrated in the endgame where the Hush has accumulated. Separately, `distance ≤ 4` admitted transitions the game forbids. |
+| Task 18 | Villain lies scoped to the night just resolved; self-snuff is a deliberate at-most-once policy; Calls aim at the suspect's own bedroom and children self-nominate | Written as specified, the bots could not measure the design: Calls resolved `noShow` in 1000/1000 games because no named child ever had reason to arrive, and the villain self-snuffed *by accident* in 59% of games, wrecking the very sweep cell built to measure that exploit deliberately. |
+| Task 15 | A free self-snuff grants `activeNights + 1` | `selfSnuffCostsNight` was read by nothing and could not bite where the plan put it, so Task 20's `hush-silent-freeSnuff` cell would have duplicated the baseline and read as a null result. |
 
 ## File Structure
 
@@ -542,7 +565,6 @@ describe('config', () => {
   it('defaults to the rulings recorded in the spec', () => {
     expect(DEFAULT_CONFIG.hushMode).toBe('silent');
     expect(DEFAULT_CONFIG.selfSnuffCostsNight).toBe(true);
-    expect(DEFAULT_CONFIG.itemsCanBeDropped).toBe(false);
     expect(DEFAULT_CONFIG.sparrowMode).toBe('dusk');
     expect(DEFAULT_CONFIG.trailRadius).toBe(1);
     expect(DEFAULT_CONFIG.callHandsRequired).toBe(2);
@@ -618,7 +640,6 @@ export interface GameConfig {
   itemCounts: Record<ItemKind, number>;
   itemsOnMap: number;
   itemRespawnDelay: number;
-  itemsCanBeDropped: boolean;
   carryCapacity: number;
   mossCarryCapacity: number;
 
@@ -645,7 +666,6 @@ export const DEFAULT_CONFIG: GameConfig = {
   itemCounts: { lantern: 2, keyhole: 2, bell: 1 },
   itemsOnMap: 3,
   itemRespawnDelay: 2,
-  itemsCanBeDropped: false,
   carryCapacity: 1,
   mossCarryCapacity: 2,
 
@@ -660,11 +680,48 @@ export function makeConfig(overrides: Partial<GameConfig> = {}): GameConfig {
 }
 ```
 
-**One field is deliberately inert.** `itemsCanBeDropped` is declared and defaults to `false`, but
-build one implements no drop action at all, so nothing reads it. It exists because the spec's §3.3
-identifies dropping as the unwritten rule that decides whether the Grip has teeth — when that
-question comes up for measurement, the switch is already in the config surface and the sweep matrix
-can reach it. Do not delete it, and do not write a drop action for it now.
+**Every field of `GameConfig` is `readonly`, and the nested containers are readonly too**
+(`itemCounts: Readonly<Record<ItemKind, number>>`, `layers: Readonly<LayerFlags>`, and `LayerFlags`'s
+own fields `readonly`). `makeConfig`'s shallow spread would otherwise hand every caller the *same*
+`itemCounts` and `layers` objects that live inside `DEFAULT_CONFIG` — one in-place write anywhere in
+seventeen later tasks would corrupt the default for the rest of the process, and a sweep would
+report wrong numbers with no crash and no symptom. The readonly modifiers make that a compile error
+instead. Keep the spread as written; it constructs a new object and still type-checks.
+
+**The type check has to actually run, or the modifiers are decoration.** `vitest run` transforms
+with esbuild, which strips types without checking them, so a `@ts-expect-error` inside a test body
+is an inert comment at runtime — delete every `readonly` and the suite still passes. Change the test
+script so the compiler is part of the gate, and add a standalone one for iterating:
+
+```json
+"typecheck": "tsc --noEmit",
+"test": "tsc --noEmit && vitest run"
+```
+
+Then assert the guarantee without executing the write. `readonly` is compile-time only, so a
+mutation in a test body genuinely happens and would leave `DEFAULT_CONFIG` corrupted for every test
+after it. Put the assertion in a function nothing calls:
+
+```ts
+  it('locks nested config containers against writes at compile time', () => {
+    // Never invoked — it exists so tsc checks it. Delete the readonly modifiers
+    // and this @ts-expect-error becomes unused, which is itself a compile error
+    // (TS2578), so `npm test` fails.
+    const wouldNotCompile = (c: GameConfig): void => {
+      // @ts-expect-error itemCounts is readonly: writing through any config would
+      // corrupt DEFAULT_CONFIG, because makeConfig's spread shares the object.
+      c.itemCounts.lantern = 999;
+    };
+    expect(wouldNotCompile).toBeTypeOf('function');
+  });
+
+  it('shares nested containers with the default, which is why they are locked', () => {
+    expect(makeConfig({ trailRadius: 2 }).itemCounts).toBe(DEFAULT_CONFIG.itemCounts);
+  });
+```
+
+Verify it bites: remove the `readonly` from `itemCounts`, confirm `npm test` fails with TS2578,
+restore it, confirm it passes.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1088,6 +1145,15 @@ export function resolveMovement(
 ): MoveResult {
   const positions: Record<PlayerId, RoomId> = {};
   const steps: Record<PlayerId, [RoomId, RoomId]> = {};
+
+  // Validate both directions: a path for someone who isn't in this phase is
+  // just as wrong as a missing path, and silently dropping it would hand the
+  // caller a result with fewer entries than they submitted.
+  for (const player of Object.keys(paths)) {
+    if (!(player in from)) {
+      throw new Error(`path submitted for a player not in this phase: ${player}`);
+    }
+  }
 
   for (const player of Object.keys(from)) {
     const start = from[player]!;
@@ -3071,6 +3137,26 @@ describe('playGame', () => {
     }
   });
 
+  it('extends the deadline by one night when a free self-snuff happens', () => {
+    // With selfSnuffCostsNight false, a villain who snuffs their own light does
+    // not spend a night on it, so the game may run one night past totalNights.
+    const c = makeConfig({ selfSnuffCostsNight: false });
+    const overrun = Array.from({ length: 200 }, (_, i) => playGame(c, i, bots))
+      .filter((g) => g.nights.length > c.totalNights);
+    for (const g of overrun) {
+      expect(g.nights.length).toBe(c.totalNights + 1);
+      expect(g.nights.some((n) => n.events.some((e) => e.t === 'selfSnuff'))).toBe(true);
+    }
+  });
+
+  it('never extends the deadline when a self-snuff costs a night', () => {
+    const c = makeConfig();
+    expect(c.selfSnuffCostsNight).toBe(true);
+    for (let seed = 0; seed < 200; seed++) {
+      expect(playGame(c, seed, bots).nights.length).toBeLessThanOrEqual(c.totalNights);
+    }
+  });
+
   it('never leaves a hushed child making a claim under hushMode silent', () => {
     for (let seed = 0; seed < 50; seed++) {
       const g = play(seed);
@@ -3151,7 +3237,13 @@ export function playGame(
     Object.fromEntries(config.roster.map((p) =>
       [p, pick(bots[p]!, knowledgeFor(state, p, sightingLog[p]!, claimLog))]));
 
-  for (let night = 1; night <= config.totalNights; night++) {
+  // A free self-snuff buys the villain tempo, not just cover: when
+  // selfSnuffCostsNight is false, snuffing their own light does not spend one of
+  // their limited nights, so the deadline moves out by one. They own a single
+  // bedroom, so this can happen at most once.
+  let extraNights = 0;
+
+  for (let night = 1; night <= config.totalNights + extraNights; night++) {
     state.night = night;
 
     const dusk = runDusk(state,
@@ -3175,6 +3267,11 @@ export function playGame(
       sightings: midnight.sightings,
       claims: morning.claims,
     });
+
+    // theft.selfSnuff is internal — publicly a self-snuff is just a light going out.
+    if (!config.selfSnuffCostsNight && extraNights === 0 && midnight.theft.selfSnuff) {
+      extraNights = 1;
+    }
 
     if (state.over) break;
     if (darkBedroomCount(state) >= config.lightsRequired) {
@@ -4054,7 +4151,9 @@ export interface GameMetrics {
   callsLive: number;
   callsCaught: number;
   thefts: number;
-  /** Active nights the villain spent on neither a theft nor a self-snuff. */
+  /** Self-snuffs included in `thefts`; recoverable only from the omniscient record. */
+  selfSnuffs: number;
+  /** Active nights that produced no light going out at all. */
   markings: number;
   meanItemHolders: number;
   encounterRate: number;
@@ -4098,11 +4197,13 @@ export function measure(record: GameRecord): GameMetrics {
     for (const n of occupancy.values()) if (n >= 2) sharedRooms++;
   }
 
+  // A self-snuff is publicly just a theft, so `thefts` already counts it. From the
+  // omniscient record we can still tell them apart: a self-snuff is the one whose
+  // victim is the villain. A marking is an active night that produced no light at all.
+  const selfSnuffs = record.nights.filter((n) =>
+    n.events.some((e) => e.t === 'theft' && e.victim === record.villain)).length;
   const activeNights = Math.max(0, record.nights.length - 1);
-  // A marking is an active night the villain spent without a theft or a self-snuff.
-  const selfSnuffs = record.nights
-    .filter((n) => n.events.some((e) => e.t === 'selfSnuff')).length;
-  const markings = Math.max(0, activeNights - thefts - selfSnuffs);
+  const markings = Math.max(0, activeNights - thefts);
 
   return {
     winner: record.outcome.winner,
@@ -4116,6 +4217,7 @@ export function measure(record: GameRecord): GameMetrics {
     callsLive,
     callsCaught,
     thefts,
+    selfSnuffs,
     markings,
     meanItemHolders: record.nights.length > 0 ? holderTotal / record.nights.length : 0,
     encounterRate: roomSlots > 0 ? sharedRooms / roomSlots : 0,

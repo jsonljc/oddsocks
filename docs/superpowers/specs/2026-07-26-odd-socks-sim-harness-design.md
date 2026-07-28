@@ -86,7 +86,18 @@ died."* This design treats that as a live hypothesis, not a fallback.
 
 **Ruling:** `hushMode` is config with three values —
 `'silent'` (§4 as written, no self-claims ever again), `'oneNight'` (the fallback), `'none'`
-(disabled, control condition). Plus `selfSnuffCostsNight: boolean`, default `true`.
+(disabled, control condition).
+
+Plus `selfSnuffCostsNight: boolean`, default `true`. When **false**, a villain who snuffs their own
+light gets one extra night on the clock (`totalNights + 1`) — the snuff does not spend one of their
+limited nights, so the deadline moves out by one. They own a single bedroom, so this fires at most
+once per game. That is
+the A/B the exploit needs: it separates "self-snuffing buys claim-immunity" from "self-snuffing
+costs the one spare night," and without it the two are confounded.
+
+The knob must bite in the **game loop**, not in theft resolution. A self-snuff already blocks
+marking structurally — the villain is in one room and has one action — so there is nothing left for
+a rules-level flag to charge. Tempo is the only cost that means anything here.
 
 ### 3.2 Sparrow's oddity is null
 
@@ -108,8 +119,10 @@ almost never fires and the Grip reduces to a consolation prize.
 
 This turns entirely on an unwritten rule: **can items be dropped?**
 
-**Ruling:** `itemsCanBeDropped: boolean`, default `false`. With no drop action, a villain who picked
-up an item earlier is stuck holding it and the Grip has teeth.
+**Ruling:** dropping is not permitted, and build one implements no drop action at all — a villain
+who picked up an item earlier is stuck holding it, so the Grip has teeth. This is deliberately *not*
+a config switch: a knob nothing reads is a question every future reader has to ask. When the Grip's
+teeth become worth measuring, add the boolean then.
 
 ### 3.4 Theft nights are self-concealing (this is correct, and it is load-bearing)
 
@@ -119,6 +132,11 @@ is standing in a room that has just gone dark, and sees only a shadow.
 
 Therefore **the villain's only exposure on a theft night is the trail.** That makes trail accuracy
 the single most important number in the game, and it is the primary metric of this harness.
+
+This only holds if the villain's own morning testimony says nothing. Build one's first engine broke
+it by mistake — `runMorning` applied R15 to the whole roster, so the villain publicly reported the
+room it had just robbed on 100% of theft nights. See **R19**: the villain reports their claimed room
+and nothing else, which is what makes this section true rather than aspirational.
 
 ### 3.5 The duo looks strictly worse than the solo
 
@@ -141,7 +159,7 @@ v10.0 does not answer these. Each is decided here explicitly.
 | R5 | Two players on one item at dusk | Random one takes it. (Contested items were cut.) |
 | R6 | Item pool | Fixed reserve of 5: 2 Lantern, 2 Keyhole, 1 Bell. Config. |
 | R7 | Items on the map | Spawn at each dusk until **3** are loose in common rooms, or the reserve empties. |
-| R8 | Dropping items | Not permitted (`itemsCanBeDropped: false`). |
+| R8 | Dropping items | Not permitted, and no drop action exists. Revisit only when the Grip's teeth are worth measuring. |
 | R9 | Carrying capacity | 1 item. Moss: 2. |
 | R10 | Is theft automatic? | Yes. Ending midnight in another child's lit bedroom steals that light. No declaration. |
 | R11 | Self-snuff | Ending midnight in your own lit bedroom as the villain **optionally** snuffs it, declared. Consumes the night's action when `selfSnuffCostsNight` is true. |
@@ -151,6 +169,8 @@ v10.0 does not answer these. Each is decided here explicitly.
 | R15 | Sighting reports | All innocents report all their sightings truthfully. The four-utterance budget of §9 is **not** modelled — build one assumes unlimited reporting, which makes results an upper bound on available signal. |
 | R16 | Trail on a self-snuff | **No trail.** §4 describes the trail as what a *theft* leaves behind, and snuffing your own light is a theft against nobody. Emitting one would hand the children a free people-fact for an action that costs the villain nothing. |
 | R17 | Who may report | The Hush removes both halves of §4 — a snuffed child can neither claim where they slept nor report what they saw. Testimony from a Hushed child is therefore not public and may not be used as evidence. |
+| R18 | Whose voice is an oddity announcement | Bell's count, Pike's stair-count and Clem's tally are **the child speaking**, not the house, so R17 silences them exactly as it silences a claim or a report. Wren's attic tell and Sparrow's floor are untouched: the first is something others notice *about* Wren, the second is private and never public evidence. It follows that when the **villain owns** one of the three, its output is theirs to lie about and the solver must not use it — as deniable as the private oddities `PUBLIC_ODDITIES` already excludes. All three constraints (Bell's count, Clem's tally, Pike's floor-crossing) are villain-guarded for that reason. |
+| R19 | What the villain reports | The villain's public report carries **the room they claimed**, never the room they were in, and names nobody (`named: []`, `others: 0`). R15's honesty rule is scoped to innocents; applying it to the villain published their true room every morning. Excluding them from the report loop instead is not available: on night one nobody is Hushed, so the single child with no report would be the villain outright. Build one models no *content* to a villain's testimony — `MorningAction` has no "what I saw" field and inventing one needs the liar AI §6.1 exists to avoid — so the villain says where they slept and stops there. |
 
 R15 is the most consequential simplification and must be repeated wherever results are quoted.
 
@@ -237,8 +257,15 @@ A room `C` is **viable** for the villain at night `n` if it survives every const
 | **Keyhole** | A Keyhole on `(room, night m)` reveals true occupants — it retroactively pins or forbids the night-`m` claim. |
 | **Bell** | A Bell naming the villain for night `n` announces their true room, so `C` must equal it. |
 | **Pike** | If Pike announced no floor crossing, a claim chain that changes floor is refuted. |
-| **Bell's count** | Rooms adjacent to Bell's midnight room held *x* people. Given innocents' true positions, the villain's claim must make the arithmetic work. |
-| **Clem's count** | Item-holding is public (pickups are announced), so a claim placing an item-holding villain in Clem's room must match Clem's announced tally. |
+| **Bell's count** | Rooms adjacent to Bell's midnight room held *x* people. The children can place only the innocents somebody publicly located, so *x* must **fall between** the number of those they can put beside Bell (plus the villain's claim, when it is beside Bell) and that same number plus the innocents nobody can place at all. Exact equality would spend Hushed children's true positions — knowledge the table does not have. |
+| **Clem's count** | Item-holding is public (pickups are announced), so a claim placing an item-holding villain in Clem's room must match Clem's announced tally — but only on a night the children can establish which room Clem was in. |
+
+Both of the last two, and the dark-room census above them, run on **`knownRoomOf`**: the room the
+children can actually establish for a child — their own claim, a lit witness naming them, a spent
+Bell, or a Keyhole — and `null` otherwise. Nothing in the solver may read `midnightPositions` for
+anyone but the villain whose claim is under test. Four or five of six players are Hushed by night
+five; a constraint that quietly consults ground truth for them refutes rooms the real table could
+never rule out, and every such refutation inflates the exposure this instrument exists to measure.
 
 Two outputs:
 
@@ -261,8 +288,10 @@ Per configuration, over N games:
 4. **Trail accuracy** — P(the trail names the actual thief). Per §3.4 this is the most important
    single number in the harness.
 5. Calls posted / Calls that went live (≥2 hands) / Calls that caught.
-6. Mean item-holders per night — the size of the pool that can physically join a Call.
-7. Dodge frequency, and villain nights wasted.
+6. Mean item-holders per night — the size of the pool that can physically join a Call. A **stock**,
+   not a flow: everyone currently holding an item and not marked, read the moment before a Call
+   resolves and spends those items. Counting the night's pickups answers a different question.
+7. Dodge frequency (live Calls whose target went elsewhere), self-snuffs, and markings per game.
 8. Encounter rate (share of rooms holding ≥2 people) — reported, but flagged bot-dependent.
 
 ---
@@ -337,6 +366,24 @@ Pure functions with no I/O, so this is a near-perfect fit for test-driven develo
 - **Map invariants**: every edge bidirectional, diameter ≤ 4, staying home legal from every room.
 
 ---
+
+## 9a. A finding that arrived during the build
+
+Recorded here because it is about the game, not the harness, and it should not wait for the sweep.
+
+**The children's "catch" win condition looks practically unreachable against a villain who plays
+rationally.** Across a thousand bot games, a Call caught the villain zero times — and review
+confirmed this is not a coding artifact like the earlier `cleared` bug was. It is §7's dodge working
+exactly as written: the Call is public, the villain sees their own name on it, and they go elsewhere.
+A player who never fails to notice never gets caught.
+
+§1 offers the children two routes — catch them, or survive to dawn. If catching requires a mistake
+that a rational villain does not make, the game has **one** win condition, and the Call's real job is
+the one §7 already claims for it: taking tempo away rather than springing shut.
+
+That may be exactly the intent. But it relocates the sweep's important question. It is not *how often
+do Calls catch* — it is **whether forcing a dodge costs the villain enough to lose the race.** That
+shows up in win rates, not catch rates, and the baseline findings should lead with it.
 
 ## 10. What comes after
 

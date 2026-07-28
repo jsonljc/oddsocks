@@ -1,0 +1,138 @@
+import { describe, it, expect } from 'vitest';
+import { runSweep, BASELINE_CELLS } from './sweep.js';
+import { formatTable } from './report.js';
+import { makeConfig, ROSTER } from '../rules/config.js';
+import { playGame } from '../rules/game.js';
+import { heuristicBot } from '../bots/heuristic.js';
+import { measure } from './metrics.js';
+
+describe('runSweep', () => {
+  it('returns one result per cell', () => {
+    const cells = [
+      { label: 'a', overrides: {}, games: 20 },
+      { label: 'b', overrides: { trailRadius: 2 }, games: 20 },
+    ];
+    const r = runSweep(cells, 1);
+    expect(r).toHaveLength(2);
+    expect(r.map((x) => x.label)).toEqual(['a', 'b']);
+    expect(r[0]!.games).toBe(20);
+  });
+
+  // Summing to one is invariant under swapping any two of the three columns,
+  // and `caughtRate` is legitimately 0 in every game these bots play — so a
+  // swap of `caughtRate` and `survivedRate` would invert the findings
+  // document's leading claim ("caught is 0 in every one of the 24,000 games")
+  // with a green suite. Pin each rate against the raw outcome on the same
+  // seeds, read straight off `playGame`, never through `measure`.
+  it('reports outcome rates matching the raw records, not merely summing to one', () => {
+    const config = makeConfig();
+    const bots = Object.fromEntries(ROSTER.map((p) => [p, heuristicBot]));
+    const games = 60;
+    const seedBase = 5;
+
+    let caught = 0, survived = 0, villainWon = 0;
+    for (let i = 0; i < games; i++) {
+      const { outcome } = playGame(config, seedBase + i, bots);
+      if (outcome.how === 'caught') caught++;
+      if (outcome.how === 'survived') survived++;
+      if (outcome.winner === 'oddsocks') villainWon++;
+    }
+
+    const [r] = runSweep([{ label: 'x', overrides: {}, games }], seedBase);
+    expect(r!.caughtRate).toBeCloseTo(caught / games, 9);
+    expect(r!.survivedRate).toBeCloseTo(survived / games, 9);
+    expect(r!.villainWinRate).toBeCloseTo(villainWon / games, 9);
+    expect(r!.caughtRate + r!.survivedRate + r!.villainWinRate).toBeCloseTo(1, 6);
+
+    // The three columns must not all read the same, or a swap could not diverge.
+    expect(survived).toBeGreaterThan(0);
+    expect(villainWon).toBeGreaterThan(0);
+    expect(survived).not.toBe(villainWon);
+  });
+
+  it('is deterministic for the same seed base', () => {
+    const cell = [{ label: 'x', overrides: {}, games: 40 }];
+    expect(JSON.stringify(runSweep(cell, 9))).toBe(JSON.stringify(runSweep(cell, 9)));
+  });
+
+  it('ships a baseline matrix that covers the open questions', () => {
+    const labels = BASELINE_CELLS.map((c) => c.label);
+    expect(labels).toContain('baseline');
+    expect(labels.some((l) => l.includes('hush'))).toBe(true);
+    expect(labels.some((l) => l.includes('marking'))).toBe(true);
+    expect(labels.some((l) => l.includes('trail'))).toBe(true);
+  });
+
+  // forcedNight/neverForcedRate is a tautology (safeLies.test.ts: "the true claim
+  // history is always consistent, so no game can be 'forced'") — it can never
+  // discriminate a config. The real signal is whether the viable set ever narrows
+  // to exactly the true room (hidingSpace === 1), which safeLies.test.ts's own
+  // "collapses ... when fully witnessed" case proves is a real, reachable event.
+  // Pin collapseRate/medianCollapseNight/meanThefts/fullQuotaRate/lateCollapseRate
+  // against values computed fresh here from the raw games, not through runSweep's
+  // own internals, so a wrong aggregation (off-by-one night index, <=1 instead of
+  // ===1, mixing up "first" collapse with "any", a wrong quota threshold, or
+  // counting night 1 in the "late" figure) would diverge from it.
+  it('reports collapse-to-truth and theft tempo matching an independent recomputation', () => {
+    const config = makeConfig();
+    const bots = Object.fromEntries(ROSTER.map((p) => [p, heuristicBot]));
+    const games = 150;
+    const seedBase = 7;
+
+    let collapsedGames = 0;
+    const firstCollapseNights: number[] = [];
+    let theftTotal = 0;
+    let fullQuotaGames = 0;
+    let lateCollapsedGames = 0;
+
+    for (let i = 0; i < games; i++) {
+      const m = measure(playGame(config, seedBase + i, bots));
+      const night = m.hidingSpace.findIndex((n) => n === 1);
+      if (night !== -1) {
+        collapsedGames++;
+        firstCollapseNights.push(night + 1);
+      }
+      // "Late" = night 2 onward (index 1+) — night 1 has no theft, marking, or
+      // Call, so a collapse there costs the villain nothing. Deliberately a
+      // separate scan from the "first collapse" one above: this asks "does a
+      // collapse ever happen after night 1," not "was the *first* one late."
+      if (m.hidingSpace.slice(1).some((n) => n === 1)) lateCollapsedGames++;
+      theftTotal += m.thefts;
+      if (m.thefts >= config.lightsRequired) fullQuotaGames++;
+    }
+
+    const [r] = runSweep([{ label: 'x', overrides: {}, games }], seedBase);
+
+    expect(r!.collapseRate).toBeCloseTo(collapsedGames / games, 9);
+    expect(r!.meanThefts).toBeCloseTo(theftTotal / games, 9);
+    expect(r!.fullQuotaRate).toBeCloseTo(fullQuotaGames / games, 9);
+    expect(r!.lateCollapseRate).toBeCloseTo(lateCollapsedGames / games, 9);
+
+    const sorted = [...firstCollapseNights].sort((a, b) => a - b);
+    const expectedMedian = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)]! : null;
+    expect(r!.medianCollapseNight).toBe(expectedMedian);
+
+    // The recomputation itself must not be vacuous: some games in this sample
+    // actually do collapse (at all, and specifically after night 1), or several
+    // of the checks above would hold trivially at 0/null regardless of what the
+    // implementation does. lateCollapsedGames < collapsedGames is not asserted
+    // as a strict "<" (both could coincide in a tiny sample) but must hold as "<=".
+    expect(collapsedGames).toBeGreaterThan(0);
+    expect(lateCollapsedGames).toBeGreaterThan(0);
+    expect(lateCollapsedGames).toBeLessThanOrEqual(collapsedGames);
+  });
+});
+
+describe('formatTable', () => {
+  it('renders a header and one row per result', () => {
+    const out = formatTable(runSweep([
+      { label: 'a', overrides: {}, games: 10 },
+      { label: 'b', overrides: {}, games: 10 },
+    ], 2));
+    const lines = out.trim().split('\n');
+    // header + rule + exactly one row per result (2 results here) — a dropped
+    // row must fail this, which `>= 3` previously would not have caught.
+    expect(lines.length).toBe(4);
+    expect(out).toContain('trailAcc');
+  });
+});
