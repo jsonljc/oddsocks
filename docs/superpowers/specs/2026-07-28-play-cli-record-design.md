@@ -1,8 +1,14 @@
 # ODD SOCKS — the Record, and a lantern leak
 
 **Date:** 2026-07-28
-**Status:** Approved design
+**Status:** **PARKED — not for implementation.** See §10.
 **Input:** `src/cli/play.ts` (the single-seat CLI), the 2026-07-26 baseline findings
+
+> **Read §10 before anything else here.** A second adversarial pass found that this
+> design's central value claim is an artifact of villain-bot error on night one. The
+> corrections in §3.4 and §4 hold and are worth keeping; the case for building the feature
+> does not. Nothing below §10 has been withdrawn, but nothing below §10 justifies writing
+> code either.
 
 ---
 
@@ -107,6 +113,11 @@ Chance is 16.7%. The columns that matter are the last two: the loose rule adds h
 per game, every one of which lands on an innocent, and catches the villain in **not one
 additional game**. The ambiguity it produces carries no information. It was noise defended
 as texture.
+
+> **The "villain caught out" column is itself misleading — see §10.** 70.9 of those 77.5
+> points land on night one alone, and they are produced by an unforced villain-bot error
+> rather than by the evidence engine. The honest figure for nights two onward is 6.5%. The
+> precision result above stands; the detection result does not.
 
 The reason is R19. The villain's public report carries the room they *claimed* and names
 nobody, so under the loose rule it contradicts every innocent who truthfully claims that
@@ -276,3 +287,90 @@ Three things have to be checked before a line is written:
 If the board turns out to specify something incompatible, the correct response is to change
 this spec, not the rules. The measured results in §3.4 survive either way — they are facts
 about the engine's evidence, not about the interface.
+
+---
+
+## 10. Second adversarial pass: why this is parked
+
+### 10.1 The value claim was night-one bot error
+
+§3.4 justified the feature with "villain caught out in 77.5% of games" and never asked
+*when*. Flags by night, narrowed rule, 2,000 games, default config:
+
+| night | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| flags per game | **0.76** | 0.00 | 0.01 | 0.01 | 0.02 | 0.01 | 0.02 |
+| flag rate per claim | **12.7%** | 0.0% | 0.1% | 0.4% | 0.5% | 0.5% | 0.6% |
+
+Villain flagged **only on night one: 70.9%**. On **night two or later: 6.5%**. Never: 22.6%.
+
+This is the same error the build ledger is a monument to. `collapse` read 85–98% until
+someone checked the distribution and found 85% of it on night one; `lateCollapseRate` was
+the honest metric. This spec's first draft reproduced that mistake exactly, in a document
+that cites it.
+
+### 10.2 The right reading is worse than "a night-one novelty"
+
+The obvious analogy to `collapse` is wrong and should not be repeated. A night-one
+*collapse* was worthless because it pinned the villain's **room** on a night with no theft.
+A night-one *flag* pins their **identity**, and identity does not decay.
+
+So the finding is not that the flags are a harmless early novelty. It is that **in 76% of
+games this surface names the villain on the first morning** — the deduction game resolved
+before a light has been stolen.
+
+The cause is not structural. A truthful claim provably cannot be flagged under either
+narrowed rule (§3.4), and night one has no theft, so **lying on night one buys the villain
+nothing**. A competent villain claims their true room and is never flagged.
+`heuristicBot`'s `villainClaim` instead draws near-uniformly from reachable rooms and walks
+into a contradiction three games in four.
+
+### 10.3 Consequence for the session this was built to serve
+
+Both seats fail, in opposite directions:
+
+- **Playing a child** — the bot villain lies badly on night one, the Record names them on
+  morning one, and the remaining six nights are Calls at a known target.
+- **Playing the villain** — a human stops lying on quiet nights almost immediately, and the
+  flags then fire in 6.5% of games.
+
+The surface therefore either ends the game at once or does nothing, and neither outcome
+teaches anything about whether the game is legible.
+
+### 10.4 Two findings about the game that outlive this spec
+
+Recorded here because they are about ODD SOCKS, not about the Record, and should migrate to
+the findings document when it is next rewritten.
+
+1. **The villain's dominant line is to tell the truth on every night they did nothing.**
+   §9's claim pressure — *"every theft leaves a hostage in the record"* — only bites on
+   theft nights. The villain currently spends about 2.6 of 6 nights taking no action at all,
+   and on each of those a truthful claim is free and unfalsifiable. Any future villain bot
+   should do this, and its absence is why `villainClaim` looks so much weaker than the
+   design is.
+2. **The Hush empties the record exactly as the endgame arrives.** Mean claims on the record,
+   out of six:
+
+   | night | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+   |---|---|---|---|---|---|---|---|
+   | `silent` (default) | 6.00 | 5.03 | 4.25 | 3.70 | 3.33 | 3.07 | **2.88** |
+   | `oneNight` | 6.00 | 5.03 | 5.22 | 5.45 | 5.63 | 5.74 | **5.79** |
+
+   Under the default, half the grid is dashes by night seven. This is an argument for
+   `hushMode: 'oneNight'` that does not route through `lateColl` at all, and it is the first
+   independent one the project has.
+
+### 10.5 What survives, and what happens next
+
+**Keep:** the §3.4 narrowing (precision genuinely went 66.1% → 100.0%, and the property is
+structural), the §3.4a rendering argument, and the §4 mechanism correction — the wrong
+lantern fix would break Lanterns and Bells whether or not this feature is ever built.
+
+**Withdraw:** the case for building it. Two adversarial passes established what the feature
+does not do and nothing about what it should be. The missing input is not another
+measurement; it is one human playing one game, which is what the CLI was built for and what
+has still not happened.
+
+**Unparking condition:** a raw session against `npm run play`, with notes on every moment the
+player reached for something the terminal would not give them. Design the surface from that
+friction. The §9 gate on the v10 rules document stands independently and is unaffected.
