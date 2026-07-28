@@ -174,7 +174,7 @@ export function runMorning(
   _dusk: DuskResult,
   midnight: MidnightResult,
   actions: Readonly<Record<PlayerId, MorningAction>>,
-  _rng: Rng,
+  rng: Rng,
 ): { events: PublicEvent[]; claims: Record<PlayerId, RoomId | null>; reporters: PlayerId[] } {
   clearNightlyItemEffects(state);
   state.activeCall = null;
@@ -198,16 +198,19 @@ export function runMorning(
     events.push(...applyItemUses(state, actions[p]!.itemUses));
   }
 
-  let posted = 0;
-  for (const p of state.config.roster) {
-    const call = actions[p]!.call;
-    // A bot proposing an illegal room (common, or a bedroom already dark) is a
-    // strategy error, not a caller bug — skip it silently, and don't let it
-    // consume the maxCallsPerNight slot a legal Call from someone else could use.
-    if (call && posted < state.config.maxCallsPerNight && canPostCall(state, call.target, call.room)) {
-      events.push(...postCall(state, call));
-      posted++;
-    }
+  // Every legal proposal this morning, gathered before any of them post. A
+  // caller proposing an illegal room (common, or a bedroom already dark) is a
+  // strategy error and is dropped here rather than competing for the slot.
+  // Who wins a scarce slot among the rest is then a fair draw — picking in
+  // ROSTER order instead let whichever player is index 0 win every tie by
+  // construction, silently discarding every other legal Call (including a
+  // human player's) for as long as that one caller kept proposing.
+  const legalCalls = state.config.roster
+    .map((p) => actions[p]!.call)
+    .filter((call): call is PostedCall => call !== null && canPostCall(state, call.target, call.room));
+
+  for (const call of rng.shuffle(legalCalls).slice(0, state.config.maxCallsPerNight)) {
+    events.push(...postCall(state, call));
   }
 
   return { events, claims, reporters };

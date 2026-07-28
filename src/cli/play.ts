@@ -476,11 +476,25 @@ function main() {
     say();
 
     const tonight = [...dusk.events, ...midnight.events];
+    const myMorning = humanMorning(state, kFor(me), tonight);
     const morning = runMorning(state, dusk, midnight, Object.fromEntries(
       config.roster.map((p) => [p,
-        p === me ? humanMorning(state, kFor(p), tonight) : heuristicBot.morning(kFor(p), rng),
+        p === me ? myMorning : heuristicBot.morning(kFor(p), rng),
       ])) as Record<PlayerId, MorningAction>, rng);
     claimLog.push(morning.claims);
+
+    if (myMorning.call) {
+      const mine = myMorning.call;
+      const wentUp = state.activeCall !== null
+        && state.activeCall.caller === mine.caller
+        && state.activeCall.target === mine.target
+        && state.activeCall.room === mine.room;
+      if (!wentUp) {
+        say(C.dim(canPostCall(state, mine.target, mine.room)
+          ? '   (another Call took the only slot tonight — yours did not go up)'
+          : '   (that room was no longer legal for a Call by the time morning resolved — yours did not go up)'));
+      }
+    }
 
     state.history.push({
       night,
