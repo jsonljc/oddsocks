@@ -5,7 +5,8 @@
   "scripts": {
     "test": "tsc --noEmit && vitest run",
     "typecheck": "tsc --noEmit",
-    "sweep": "tsx src/cli/sweep.ts"
+    "sweep": "tsx src/cli/sweep.ts",
+    "play": "tsx src/cli/play.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
