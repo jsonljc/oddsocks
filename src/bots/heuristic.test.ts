@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { makeRng } from '../rules/rng.js';
 import { makeConfig, ROSTER } from '../rules/config.js';
 import { createGame } from '../rules/state.js';
-import { isLegalPath } from '../rules/map.js';
+import { isBedroom, isLegalPath } from '../rules/map.js';
 import { playGame } from '../rules/game.js';
 import { heuristicBot, suspicionFrom } from './heuristic.js';
 import type { Knowledge } from './types.js';
@@ -70,6 +70,49 @@ describe('suspicion', () => {
   it('never suspects yourself', () => {
     const k = knowledge({ me: 'pike', publicEvents: [{ t: 'trail', player: 'pike', room: 'bed_bell' }] });
     expect(suspicionFrom(k)['pike']).toBe(0);
+  });
+});
+
+describe('posting a Call', () => {
+  // Two children accused of nothing, one named twice by the trail.
+  const suspectPike = (over: Partial<Knowledge> = {}) => knowledge({
+    me: 'bell', position: 'kitchen', publicEvents: [
+      { t: 'trail', player: 'pike', room: 'bed_bell' },
+      { t: 'trail', player: 'pike', room: 'bed_clem' },
+    ], ...over,
+  });
+
+  it('accuses the top suspect without needing an item in hand', () => {
+    // `canPostCall` asks only for a lit bedroom — holding an item is a
+    // requirement for JOINING a Call, never for posting one. Gating the post
+    // on it rationed the children's only real move by an unrelated economy.
+    const call = heuristicBot.morning(suspectPike({ held: [] }), makeRng(1)).call;
+    expect(call).not.toBeNull();
+    expect(call!.target).toBe('pike');
+  });
+
+  it('never sets the Call on the accused\'s own bedroom', () => {
+    // The Call binds only the player it names, and a villain has no reason to
+    // walk into their own bedroom — robbing it does not advance their quota.
+    // Naming `bed_<accused>` therefore spends the accusation on the one room
+    // that costs a guilty target nothing.
+    const k = suspectPike({ held: ['lantern'] });
+    for (let i = 0; i < 50; i++) {
+      const call = heuristicBot.morning(k, makeRng(i)).call;
+      expect(call).not.toBeNull();
+      expect(call!.room).not.toBe('bed_pike');
+      expect(isBedroom(k.config.house, call!.room)).toBe(true);
+    }
+  });
+
+  it('can still self-nominate with empty hands', () => {
+    const empty = knowledge({ me: 'bell', position: 'kitchen', held: [] });
+    const calls = new Set<string>();
+    for (let i = 0; i < 60; i++) {
+      const call = heuristicBot.morning(empty, makeRng(i)).call;
+      if (call) calls.add(`${call.target}|${call.selfNominated}`);
+    }
+    expect(calls).toContain('bell|true');
   });
 });
 

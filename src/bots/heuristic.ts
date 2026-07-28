@@ -139,20 +139,25 @@ export const heuristicBot: Bot = {
       const rooms = litBedrooms(k);
       const myBed = `bed_${k.me}`;
 
-      // Aim at a room the suspect might plausibly be in: their own bedroom,
-      // not an arbitrary lit one — a suspect has no reason to walk into a
-      // call that has nothing to do with them.
-      const targetBed = top ? `bed_${top}` : null;
-      const suspectCall = top && targetBed && rooms.includes(targetBed) &&
-        (suspicion[top] ?? 0) > 0 && k.held.length > 0
-        ? { caller: k.me, target: top, room: targetBed, selfNominated: false }
+      // A Call constrains only the child it names, and the villain's own
+      // bedroom is the one room they never need — darkening it does not
+      // advance their quota. Aiming at `bed_<suspect>` therefore spends the
+      // accusation on nothing precisely when the accusation is right. Name a
+      // lit bedroom the suspect would still want if they are the villain.
+      const denials = top ? rooms.filter((r) => r !== `bed_${top}`).sort() : [];
+      const suspectCall = top && denials.length > 0 && (suspicion[top] ?? 0) > 0
+        ? { caller: k.me, target: top, room: rng.pick(denials), selfNominated: false }
         : null;
 
       // Self-nomination: the design's own way to buy a hard fact — "I'll come,
-      // I'll clear myself." A minority of item-holding mornings with no
-      // stronger suspect to name, stake a call on my own lit bedroom instead.
-      const selfNominate = !suspectCall && k.held.length > 0 && rooms.includes(myBed) &&
-        rng.next() < 0.3;
+      // I'll clear myself." A minority of mornings with no stronger suspect to
+      // name, stake a call on my own lit bedroom instead.
+      //
+      // Neither branch checks `held`: `canPostCall` asks only for a lit
+      // bedroom. An item is what a hand JOINING a Call spends, and posting is
+      // free — gating it on carrying one rationed the children's only real
+      // move by an economy that has nothing to do with the accusation.
+      const selfNominate = !suspectCall && rooms.includes(myBed) && rng.next() < 0.3;
 
       const call = suspectCall ?? (selfNominate
         ? { caller: k.me, target: k.me, room: myBed, selfNominated: true }
