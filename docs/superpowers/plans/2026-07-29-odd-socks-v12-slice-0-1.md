@@ -1,0 +1,3547 @@
+# ODD SOCKS v12 — Slices 0–1 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build a solo-playable haunted house at night, plus a house report and claim board driven by a hand-authored match log — everything one person can evaluate without a second human.
+
+**Architecture:** A deterministic, headless, fixed-timestep simulation in `core/` that knows nothing about rendering, audio or networking, emitting a typed event stream. Two pure functions read that stream: an identity-stripped projection feeding the house report, and a claim board. PixiJS renders the simulation but decides nothing. This shape exists so slice 2b's authoritative server can run the same core unchanged.
+
+**Tech Stack:** TypeScript 5.6 (strict), Vite 6, PixiJS 8, Vitest 2, Node 20+.
+
+**Spec:** `docs/superpowers/specs/2026-07-29-odd-socks-v12-prototype-design.md`
+**Rules:** `docs/rules-v12.0.md` (verbatim, authoritative)
+
+## Global Constraints
+
+Every task's requirements implicitly include this section.
+
+- **Determinism is required from the first tick.** Fixed timestep of exactly `1/30` s. No `Math.random()`, no `Date.now()`, no wall-clock reads anywhere in `core/` or `log/`. Same seed plus same input sequence must produce a byte-identical event stream. Retrofitting this is expensive and slice 2b's server depends on it.
+- **Layer boundary.** `core/` and `log/` must not import from `render/`, `audio/`, `app/` or `scripted/`. Enforced by a test, not by review. `core/ ↔ log/` is permitted.
+- **No room has more than two exits**, counting doorways and stairs (rules §6.1). A hard constraint — §16.3's Bind requires sealing every exit.
+- **`houseReport` must be structurally unable to see player identities**, except the one field rules §13.1 grants it: which children did not return. Enforced by the projection's type, not by discipline.
+- **The scripted stalker never produces a number.** No metrics, no counters, no win-rate API. It is set dressing for solo feel-testing (spec §9.1).
+- **No economy simulator** for rules §32 Q2/Q3/Q4 (spec §9.2). Out of scope entirely.
+- TypeScript `strict: true`. All new code has tests unless explicitly noted as unverifiable-without-a-human.
+- Work on branch `v12`. Commit at the end of every task.
+
+## File Structure
+
+```
+v12/
+  package.json, tsconfig.json, vite.config.ts, vitest.config.ts, index.html
+  src/
+    core/
+      rng.ts         seeded deterministic RNG
+      geometry.ts    Vec2/Rect, containment, door-span crossing
+      house.ts       House/Room/Door types, lookups, validation
+      light.ts       ambient by night, light at a point, visibility
+      events.ts      MatchEvent union — what core emits
+      movement.ts    per-tick integration + room transfer
+      lantern.ts     carry/place/snuff/relight state machine
+      take.ts        rules §12.1 conditions, warning, completion
+      sim.ts         the tick loop; owns state; drains events
+    house/hollow.ts  the eight-room house, as data
+    log/
+      project.ts     identity-stripping projection
+      report.ts      renders rules §13.1
+      board.ts       claim board + contradiction detection
+      fixture.ts     hand-authored six-night match log
+    render/
+      stage.ts       Pixi app, camera
+      rooms.ts       rooms, doors, furniture
+      lighting.ts    light mask geometry + draw
+      actors.ts      children, silhouettes, nametags
+    audio/sounds.ts  event → sound mapping
+    scripted/stalker.ts
+    app/
+      input.ts, main.ts
+      scenes/night.ts, scenes/morning.ts
+  test/
+```
+
+---
+
+## Task 0: The tester track (no code, runs in parallel)
+
+**This is the only work in this plan that can move the constraint in spec §2.** Start it on day one and let it run alongside every other task. It has no test cycle.
+
+**Files:**
+- Create: `docs/findings/2026-07-29-tester-track.md`
+
+- [ ] **Step 1: Write the tracking document**
+
+Create `docs/findings/2026-07-29-tester-track.md` with three sections: `## Channels contacted` (date, channel, what was posted, response), `## Committed testers` (name/handle, tier they satisfy), `## Gate status`.
+
+- [ ] **Step 2: Contact channels**
+
+Post in playtest-swap Discords, r/playmygame, r/IndieDev playtest threads, and any personal group chat. Record each in the document.
+
+- [ ] **Step 3: Record gate status**
+
+Gate A is met at **2–3 humans confirmed for a scheduled session, twice**. Gate B at **6**. Write the current status plainly, including "not met" if that is the truth.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/findings/2026-07-29-tester-track.md
+git commit -m "docs: open the tester track, the only work that moves the constraint"
+```
+
+---
+
+## Task 1: Scaffold and deterministic RNG
+
+**Files:**
+- Create: `v12/package.json`, `v12/tsconfig.json`, `v12/vite.config.ts`, `v12/vitest.config.ts`, `v12/index.html`
+- Create: `v12/src/core/rng.ts`
+- Test: `v12/test/rng.test.ts`
+
+**Interfaces:**
+- Consumes: nothing
+- Produces: `makeRng(seed: number): Rng` where `interface Rng { (): number; int(maxExclusive: number): number; pick<T>(xs: readonly T[]): T }`
+
+- [ ] **Step 1: Create the project scaffold**
+
+`v12/package.json`:
+
+```json
+{
+  "name": "odd-socks-v12",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && vitest run"
+  },
+  "dependencies": { "pixi.js": "^8.6.0" },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.0"
+  }
+}
+```
+
+`v12/tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src", "test"]
+}
+```
+
+`v12/vitest.config.ts`:
+
+```ts
+import { defineConfig } from 'vitest/config';
+export default defineConfig({ test: { globals: true, environment: 'node' } });
+```
+
+`v12/vite.config.ts`:
+
+```ts
+import { defineConfig } from 'vite';
+export default defineConfig({ server: { open: true } });
+```
+
+`v12/index.html`:
+
+```html
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>The Odd Socks</title>
+    <style>html,body{margin:0;height:100%;background:#0b0a10;overflow:hidden}</style>
+  </head>
+  <body><script type="module" src="/src/app/main.ts"></script></body>
+</html>
+```
+
+Then run `cd v12 && npm install`.
+
+- [ ] **Step 2: Write the failing test**
+
+`v12/test/rng.test.ts`:
+
+```ts
+import { makeRng } from '../src/core/rng';
+
+describe('makeRng', () => {
+  it('produces an identical sequence for the same seed', () => {
+    const a = makeRng(1234), b = makeRng(1234);
+    const seqA = Array.from({ length: 50 }, () => a());
+    const seqB = Array.from({ length: 50 }, () => b());
+    expect(seqA).toEqual(seqB);
+  });
+
+  it('produces a different sequence for a different seed', () => {
+    const a = makeRng(1234), b = makeRng(1235);
+    expect(Array.from({ length: 50 }, () => a()))
+      .not.toEqual(Array.from({ length: 50 }, () => b()));
+  });
+
+  it('stays in [0, 1)', () => {
+    const r = makeRng(7);
+    for (let i = 0; i < 1000; i++) {
+      const v = r();
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(1);
+    }
+  });
+
+  it('int() stays in range and pick() is stable per seed', () => {
+    expect(makeRng(9).int(5)).toBe(makeRng(9).int(5));
+    const xs = ['a', 'b', 'c'] as const;
+    expect(makeRng(3).pick(xs)).toBe(makeRng(3).pick(xs));
+    for (let i = 0; i < 200; i++) {
+      const v = makeRng(i).int(4);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(4);
+    }
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/rng.test.ts`
+Expected: FAIL — cannot resolve `../src/core/rng`.
+
+- [ ] **Step 4: Implement**
+
+`v12/src/core/rng.ts`:
+
+```ts
+export interface Rng {
+  (): number;
+  int(maxExclusive: number): number;
+  pick<T>(xs: readonly T[]): T;
+}
+
+/** mulberry32. Chosen because it is 4 lines, has no state we must serialise
+ *  beyond one uint32, and is reproducible across engines — all three matter
+ *  when slice 2b's server has to replay a client's stream. */
+export function makeRng(seed: number): Rng {
+  let a = seed >>> 0;
+  const next = (): number => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const rng = next as Rng;
+  rng.int = (maxExclusive: number) => Math.floor(next() * maxExclusive);
+  rng.pick = <T,>(xs: readonly T[]): T => {
+    const v = xs[rng.int(xs.length)];
+    if (v === undefined) throw new Error('pick() on an empty array');
+    return v;
+  };
+  return rng;
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS, 4 tests. `tsc --noEmit` clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): scaffold the client and pin determinism at the RNG"
+```
+
+---
+
+## Task 2: Geometry, the house, and the two structural guards
+
+**Files:**
+- Create: `v12/src/core/geometry.ts`, `v12/src/core/house.ts`, `v12/src/house/hollow.ts`
+- Test: `v12/test/geometry.test.ts`, `v12/test/house.test.ts`, `v12/test/boundaries.test.ts`
+
+**Interfaces:**
+- Consumes: nothing
+- Produces:
+  - `interface Vec2 { x: number; y: number }`, `interface Rect { x: number; y: number; w: number; h: number }`
+  - `clampInside(p: Vec2, radius: number, r: Rect): Vec2`
+  - `pointInRect(p: Vec2, r: Rect): boolean`
+  - `type RoomId = string`, `type DoorId = string`
+  - `interface Door { id: DoorId; a: RoomId; b: RoomId; at: Vec2; span: number; kind: 'doorway' | 'stair' }`
+  - `interface Room { id: RoomId; name: string; floor: number; bounds: Rect; centralObject: string }`
+  - `interface House { rooms: Room[]; doors: Door[] }`
+  - `roomById(h: House, id: RoomId): Room`, `exitsOf(h: House, id: RoomId): Door[]`
+  - `validateHouse(h: House): string[]` — returns violations, empty when sound
+  - `HOLLOW: House`
+
+- [ ] **Step 1: Write the failing geometry test**
+
+`v12/test/geometry.test.ts`:
+
+```ts
+import { clampInside, pointInRect } from '../src/core/geometry';
+
+const room = { x: 0, y: 0, w: 100, h: 80 };
+
+describe('clampInside', () => {
+  it('leaves an interior point untouched', () => {
+    expect(clampInside({ x: 50, y: 40 }, 5, room)).toEqual({ x: 50, y: 40 });
+  });
+
+  it('pulls a point back inside by the radius on each axis', () => {
+    expect(clampInside({ x: -20, y: 40 }, 5, room)).toEqual({ x: 5, y: 40 });
+    expect(clampInside({ x: 200, y: 40 }, 5, room)).toEqual({ x: 95, y: 40 });
+    expect(clampInside({ x: 50, y: -3 }, 5, room)).toEqual({ x: 50, y: 5 });
+    expect(clampInside({ x: 50, y: 999 }, 5, room)).toEqual({ x: 50, y: 75 });
+  });
+});
+
+describe('pointInRect', () => {
+  it('is inclusive of the boundary', () => {
+    expect(pointInRect({ x: 0, y: 0 }, room)).toBe(true);
+    expect(pointInRect({ x: 100, y: 80 }, room)).toBe(true);
+    expect(pointInRect({ x: 101, y: 40 }, room)).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: Write the failing house test**
+
+`v12/test/house.test.ts`:
+
+```ts
+import { validateHouse, exitsOf, roomById } from '../src/core/house';
+import { HOLLOW } from '../src/house/hollow';
+
+describe('HOLLOW', () => {
+  it('has ten rooms: eight active plus the Shared Bedroom and the Hearth Room', () => {
+    expect(HOLLOW.rooms).toHaveLength(10);
+    expect(HOLLOW.rooms.map(r => r.id)).toContain('shared_bedroom');
+    expect(HOLLOW.rooms.map(r => r.id)).toContain('hearth');
+  });
+
+  it('spans exactly two floors', () => {
+    expect(new Set(HOLLOW.rooms.map(r => r.floor))).toEqual(new Set([0, 1]));
+  });
+
+  it('has exactly two stair connections', () => {
+    expect(HOLLOW.doors.filter(d => d.kind === 'stair')).toHaveLength(2);
+  });
+
+  // rules §6.1 — a hard constraint, because §16.3's Bind requires sealing every exit
+  it('gives no room more than two exits', () => {
+    for (const room of HOLLOW.rooms) {
+      expect(exitsOf(HOLLOW, room.id).length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('is fully connected — every room reachable from the Shared Bedroom', () => {
+    const seen = new Set<string>(['shared_bedroom']);
+    const queue = ['shared_bedroom'];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const d of exitsOf(HOLLOW, id)) {
+        const other = d.a === id ? d.b : d.a;
+        if (!seen.has(other)) { seen.add(other); queue.push(other); }
+      }
+    }
+    expect(seen.size).toBe(HOLLOW.rooms.length);
+  });
+
+  it('validates clean', () => {
+    expect(validateHouse(HOLLOW)).toEqual([]);
+  });
+
+  it('reports a violation when a room is given a third exit', () => {
+    const broken = {
+      ...HOLLOW,
+      doors: [...HOLLOW.doors,
+        { id: 'x1', a: 'nursery', b: 'attic', at: { x: 0, y: 0 }, span: 20, kind: 'doorway' as const },
+        { id: 'x2', a: 'nursery', b: 'cellar', at: { x: 0, y: 0 }, span: 20, kind: 'doorway' as const }],
+    };
+    expect(validateHouse(broken).join(' ')).toMatch(/nursery.*exits/i);
+  });
+
+  it('roomById throws on an unknown id rather than returning undefined', () => {
+    expect(() => roomById(HOLLOW, 'no_such_room')).toThrow();
+  });
+});
+```
+
+- [ ] **Step 3: Write the failing layer-boundary test**
+
+This is the structural guard from Global Constraints. `v12/test/boundaries.test.ts`:
+
+```ts
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir).flatMap(entry => {
+    const p = join(dir, entry);
+    return statSync(p).isDirectory() ? filesUnder(p) : p.endsWith('.ts') ? [p] : [];
+  });
+}
+
+const FORBIDDEN = ['render', 'audio', 'app', 'scripted'];
+
+describe('layer boundaries', () => {
+  // core/ and log/ run on the server in slice 2b. If a browser import ever
+  // reaches them the authoritative model stops being portable, silently.
+  it.each(['src/core', 'src/log', 'src/house'])('%s imports no browser layer', dir => {
+    for (const file of filesUnder(join(__dirname, '..', dir))) {
+      const src = readFileSync(file, 'utf8');
+      for (const layer of FORBIDDEN) {
+        expect(src).not.toMatch(new RegExp(`from ['"][^'"]*${layer}/`));
+      }
+    }
+  });
+
+  it.each(['src/core', 'src/log'])('%s reads no wall clock and no global random', dir => {
+    for (const file of filesUnder(join(__dirname, '..', dir))) {
+      const src = readFileSync(file, 'utf8');
+      expect(src).not.toMatch(/Math\.random\(/);
+      expect(src).not.toMatch(/Date\.now\(|performance\.now\(/);
+    }
+  });
+});
+```
+
+Note `src/log` and `src/house` will not exist yet — create empty `src/log/.gitkeep` is not enough for `filesUnder`, so create `src/log/index.ts` containing `export {};` in step 5 to keep the test honest from the start.
+
+- [ ] **Step 4: Run tests to verify they fail**
+
+Run: `cd v12 && npx vitest run`
+Expected: FAIL — modules unresolved.
+
+- [ ] **Step 5: Implement**
+
+`v12/src/core/geometry.ts`:
+
+```ts
+export interface Vec2 { x: number; y: number }
+export interface Rect { x: number; y: number; w: number; h: number }
+
+export function pointInRect(p: Vec2, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+/** Keep a circle of `radius` inside `r`. Rooms are boxes you are inside of,
+ *  so containment is the operation — not the usual push-out-of-an-obstacle. */
+export function clampInside(p: Vec2, radius: number, r: Rect): Vec2 {
+  return {
+    x: Math.min(Math.max(p.x, r.x + radius), r.x + r.w - radius),
+    y: Math.min(Math.max(p.y, r.y + radius), r.y + r.h - radius),
+  };
+}
+
+export function dist(a: Vec2, b: Vec2): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+```
+
+`v12/src/core/house.ts`:
+
+```ts
+import type { Rect, Vec2 } from './geometry';
+
+export type RoomId = string;
+export type DoorId = string;
+
+export interface Room {
+  id: RoomId; name: string; floor: number; bounds: Rect; centralObject: string;
+}
+export interface Door {
+  id: DoorId; a: RoomId; b: RoomId; at: Vec2; span: number;
+  kind: 'doorway' | 'stair';
+}
+export interface House { rooms: Room[]; doors: Door[] }
+
+export function roomById(h: House, id: RoomId): Room {
+  const r = h.rooms.find(x => x.id === id);
+  if (!r) throw new Error(`unknown room: ${id}`);
+  return r;
+}
+
+export function exitsOf(h: House, id: RoomId): Door[] {
+  return h.doors.filter(d => d.a === id || d.b === id);
+}
+
+export function otherSide(d: Door, from: RoomId): RoomId {
+  return d.a === from ? d.b : d.a;
+}
+
+/** rules §6.1 is a hard constraint, not a preference: §16.3's Bind requires
+ *  sealing every exit, so a three-exit room would be untrappable. */
+export function validateHouse(h: House): string[] {
+  const problems: string[] = [];
+  for (const room of h.rooms) {
+    const n = exitsOf(h, room.id).length;
+    if (n > 2) problems.push(`room ${room.id} has ${n} exits, maximum is 2 (rules §6.1)`);
+    if (n === 0) problems.push(`room ${room.id} has no exits`);
+  }
+  for (const d of h.doors) {
+    if (!h.rooms.some(r => r.id === d.a)) problems.push(`door ${d.id} references unknown room ${d.a}`);
+    if (!h.rooms.some(r => r.id === d.b)) problems.push(`door ${d.id} references unknown room ${d.b}`);
+  }
+  return problems;
+}
+```
+
+`v12/src/house/hollow.ts` — ten rooms across two floors, each with at most two exits, laid out as a chain with the Shared Bedroom and Hearth on the ground floor:
+
+```ts
+import type { House } from '../core/house';
+
+const W = 260, H = 200, GAP = 40;
+const cell = (col: number, row: number) =>
+  ({ x: col * (W + GAP), y: row * (H + GAP), w: W, h: H });
+
+/** Floor 0: bedroom — hearth — kitchen — library — cellar
+ *  Floor 1: nursery — music_room — playroom — bathroom — attic
+ *  Stairs join library↔playroom and cellar↔attic, giving a loop with no
+ *  room exceeding two exits. */
+export const HOLLOW: House = {
+  rooms: [
+    { id: 'shared_bedroom', name: 'Shared Bedroom', floor: 0, bounds: cell(0, 1), centralObject: 'six beds' },
+    { id: 'hearth',         name: 'Hearth Room',    floor: 0, bounds: cell(1, 1), centralObject: 'the five flames' },
+    { id: 'kitchen',        name: 'Kitchen',        floor: 0, bounds: cell(2, 1), centralObject: 'a long table' },
+    { id: 'library',        name: 'Library',        floor: 0, bounds: cell(3, 1), centralObject: 'a reading chair' },
+    { id: 'cellar',         name: 'Cellar',         floor: 0, bounds: cell(4, 1), centralObject: 'a coal chute' },
+    { id: 'nursery',        name: 'Nursery',        floor: 1, bounds: cell(0, 0), centralObject: 'a rocking horse' },
+    { id: 'music_room',     name: 'Music Room',     floor: 1, bounds: cell(1, 0), centralObject: 'an upright piano' },
+    { id: 'playroom',       name: 'Playroom',       floor: 1, bounds: cell(2, 0), centralObject: 'a toy chest' },
+    { id: 'bathroom',       name: 'Bathroom',       floor: 1, bounds: cell(3, 0), centralObject: 'a claw-foot bath' },
+    { id: 'attic',          name: 'Attic',          floor: 1, bounds: cell(4, 0), centralObject: 'a dust-sheeted mirror' },
+  ],
+  doors: [
+    { id: 'd_bed_hearth',  a: 'shared_bedroom', b: 'hearth',      at: { x: 1 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_hearth_kit',  a: 'hearth',         b: 'kitchen',     at: { x: 2 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_kit_lib',     a: 'kitchen',        b: 'library',     at: { x: 3 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_lib_cellar',  a: 'library',        b: 'cellar',      at: { x: 4 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_nur_music',   a: 'nursery',        b: 'music_room',  at: { x: 1 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_music_play',  a: 'music_room',     b: 'playroom',    at: { x: 2 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_play_bath',   a: 'playroom',       b: 'bathroom',    at: { x: 3 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_bath_attic',  a: 'bathroom',       b: 'attic',       at: { x: 4 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 's_lib_play',    a: 'library',        b: 'playroom',    at: { x: 3 * (W + GAP) + W / 2,   y: 1 * (H + GAP) - GAP / 2 }, span: 60, kind: 'stair' },
+    { id: 's_cellar_attic',a: 'cellar',         b: 'attic',       at: { x: 4 * (W + GAP) + W / 2,   y: 1 * (H + GAP) - GAP / 2 }, span: 60, kind: 'stair' },
+  ],
+};
+```
+
+Also create `v12/src/log/index.ts` containing `export {};` so the boundary test has a directory to scan from the start.
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS. If the exit-count test fails, the house data is wrong — fix the data, never the constraint.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the house, with §6.1's two-exit rule enforced by test"
+```
+
+---
+
+## Task 3: The event stream
+
+**Files:**
+- Create: `v12/src/core/events.ts`
+- Test: `v12/test/events.test.ts`
+
+**Interfaces:**
+- Consumes: `RoomId`, `DoorId` from `core/house`
+- Produces: `type ActorId = string`, `type LanternId = string`, `type SockId = string`, `type MatchEvent` (discriminated union on `kind`), `interface EventSink { emit(e: MatchEvent): void; drain(): MatchEvent[] }`, `makeSink(): EventSink`
+
+Slice 0 emits a **provisional** stream; Task 11 pins the schema. Determinism is required from the first tick regardless.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/events.test.ts`:
+
+```ts
+import { makeSink, type MatchEvent } from '../src/core/events';
+
+describe('EventSink', () => {
+  it('drains in emission order and empties', () => {
+    const sink = makeSink();
+    sink.emit({ kind: 'move.enter', tick: 1, night: 1, actor: 'pike', room: 'kitchen', via: 'd_hearth_kit' });
+    sink.emit({ kind: 'take.warn',  tick: 5, night: 2, actor: 'wren', victim: 'pike', room: 'kitchen' });
+    const out = sink.drain();
+    expect(out.map(e => e.kind)).toEqual(['move.enter', 'take.warn']);
+    expect(sink.drain()).toEqual([]);
+  });
+
+  it('narrows on kind', () => {
+    const e: MatchEvent = { kind: 'flame.out', tick: 9, night: 3, reason: 'take', remaining: 4 };
+    if (e.kind === 'flame.out') expect(e.remaining).toBe(4);
+    else throw new Error('narrowing failed');
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/events.test.ts`
+Expected: FAIL — cannot resolve `../src/core/events`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/core/events.ts`:
+
+```ts
+import type { DoorId, RoomId } from './house';
+
+export type ActorId = string;
+export type LanternId = string;
+export type SockId = string;
+
+export type FlameReason = 'take' | 'snuff' | 'failed-call' | 'house-event';
+export type SoundKind = 'take' | 'snuff' | 'slip' | 'shed';
+
+interface Base { tick: number; night: number }
+
+export type MatchEvent =
+  | (Base & { kind: 'move.enter'; actor: ActorId; room: RoomId; via: DoorId })
+  | (Base & { kind: 'door.toggle'; actor: ActorId; door: DoorId; open: boolean })
+  | (Base & { kind: 'lantern.carry' | 'lantern.place' | 'lantern.snuff' | 'lantern.relight';
+              actor: ActorId; lantern: LanternId; room: RoomId; watching?: DoorId })
+  | (Base & { kind: 'take.warn' | 'take.complete'; actor: ActorId; victim: ActorId; room: RoomId })
+  | (Base & { kind: 'sock.spawn'; sock: SockId; room: RoomId; source: 'take' | 'snuff' | 'shed' })
+  | (Base & { kind: 'sock.pickup' | 'sock.drop' | 'sock.secure';
+              actor: ActorId; sock: SockId; room: RoomId })
+  | (Base & { kind: 'flame.out'; reason: FlameReason; remaining: number })
+  | (Base & { kind: 'sound'; floor: number; sound: SoundKind; room: RoomId });
+
+export interface EventSink { emit(e: MatchEvent): void; drain(): MatchEvent[] }
+
+export function makeSink(): EventSink {
+  let buffer: MatchEvent[] = [];
+  return {
+    emit(e) { buffer.push(e); },
+    drain() { const out = buffer; buffer = []; return out; },
+  };
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the event stream core emits, provisional until slice 1"
+```
+
+---
+
+## Task 4: The light model
+
+**Files:**
+- Create: `v12/src/core/light.ts`
+- Test: `v12/test/light.test.ts`
+
+**Interfaces:**
+- Consumes: `Vec2`, `dist` from `core/geometry`; `RoomId` from `core/house`
+- Produces:
+  - `AMBIENT_BY_NIGHT: readonly number[]`, `DARK_ENOUGH_FOR_TAKE: number`, `IDENTIFY_THRESHOLD: number`, `LANTERN_RADIUS: number`, `CARRIED_LANTERN_RADIUS: number`
+  - `interface LightSource { room: RoomId; at: Vec2; radius: number }`
+  - `ambientForNight(night: number): number`
+  - `lightAt(night: number, room: RoomId, p: Vec2, sources: readonly LightSource[]): number`
+  - `type Visibility = 'identified' | 'silhouette' | 'unseen'`
+  - `visibilityAt(level: number): Visibility`
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/light.test.ts`:
+
+```ts
+import {
+  AMBIENT_BY_NIGHT, ambientForNight, lightAt, visibilityAt,
+  DARK_ENOUGH_FOR_TAKE, IDENTIFY_THRESHOLD, LANTERN_RADIUS,
+} from '../src/core/light';
+
+describe('ambient', () => {
+  // rules §18: nights 1-2 keep faint ambient visibility; night 3 drops; 5-6 harsher
+  it('falls monotonically from night one to night six', () => {
+    for (let n = 2; n <= 6; n++) {
+      expect(ambientForNight(n)).toBeLessThanOrEqual(ambientForNight(n - 1));
+    }
+    expect(ambientForNight(6)).toBeLessThan(ambientForNight(1));
+  });
+
+  it('is bright enough to identify on night one and too dark by night six', () => {
+    expect(ambientForNight(1)).toBeGreaterThanOrEqual(IDENTIFY_THRESHOLD);
+    expect(ambientForNight(6)).toBeLessThan(DARK_ENOUGH_FOR_TAKE);
+  });
+
+  it('clamps out-of-range nights rather than returning undefined', () => {
+    expect(ambientForNight(0)).toBe(AMBIENT_BY_NIGHT[0]);
+    expect(ambientForNight(99)).toBe(AMBIENT_BY_NIGHT[AMBIENT_BY_NIGHT.length - 1]);
+  });
+});
+
+describe('lightAt', () => {
+  const lantern = { room: 'kitchen', at: { x: 100, y: 100 }, radius: LANTERN_RADIUS };
+
+  it('is ambient with no sources', () => {
+    expect(lightAt(6, 'kitchen', { x: 0, y: 0 }, [])).toBe(ambientForNight(6));
+  });
+
+  it('is full at a lantern and ambient beyond its radius', () => {
+    expect(lightAt(6, 'kitchen', { x: 100, y: 100 }, [lantern])).toBe(1);
+    expect(lightAt(6, 'kitchen', { x: 100 + LANTERN_RADIUS + 1, y: 100 }, [lantern]))
+      .toBe(ambientForNight(6));
+  });
+
+  it('does not leak between rooms', () => {
+    expect(lightAt(6, 'library', { x: 100, y: 100 }, [lantern])).toBe(ambientForNight(6));
+  });
+
+  it('falls off with distance inside the radius', () => {
+    const near = lightAt(6, 'kitchen', { x: 130, y: 100 }, [lantern]);
+    const far  = lightAt(6, 'kitchen', { x: 190, y: 100 }, [lantern]);
+    expect(near).toBeGreaterThan(far);
+  });
+});
+
+describe('visibilityAt', () => {
+  // rules §9: in deep darkness names disappear and silhouettes obscure,
+  // but movement stays perceptible — so 'unseen' must be rare, not the default.
+  it('identifies in light, silhouettes in the dark, and never blinds entirely at ambient', () => {
+    expect(visibilityAt(1)).toBe('identified');
+    expect(visibilityAt(IDENTIFY_THRESHOLD)).toBe('identified');
+    expect(visibilityAt(IDENTIFY_THRESHOLD - 0.01)).toBe('silhouette');
+    expect(visibilityAt(ambientForNight(6))).toBe('silhouette');
+    expect(visibilityAt(0)).toBe('unseen');
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/light.test.ts`
+Expected: FAIL — cannot resolve `../src/core/light`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/core/light.ts`:
+
+```ts
+import { dist, type Vec2 } from './geometry';
+import type { RoomId } from './house';
+
+/** rules §18's escalation, as numbers. Index 0 is night one.
+ *  Nights 1-2 keep faint ambient visibility; night 3 drops; 5-6 are harsher. */
+export const AMBIENT_BY_NIGHT = [0.55, 0.50, 0.30, 0.22, 0.14, 0.08] as const;
+
+export const IDENTIFY_THRESHOLD = 0.45;
+export const DARK_ENOUGH_FOR_TAKE = 0.25;
+export const LANTERN_RADIUS = 120;
+export const CARRIED_LANTERN_RADIUS = 45;
+
+export interface LightSource { room: RoomId; at: Vec2; radius: number }
+
+export function ambientForNight(night: number): number {
+  const i = Math.min(Math.max(night - 1, 0), AMBIENT_BY_NIGHT.length - 1);
+  return AMBIENT_BY_NIGHT[i]!;
+}
+
+/** Light is room-scoped. rules §10.2 says a lantern "illuminates a defined
+ *  area", and rooms are boxes, so a source never reaches past its own room.
+ *  That is also what makes the render-side mask cheap. */
+export function lightAt(
+  night: number, room: RoomId, p: Vec2, sources: readonly LightSource[],
+): number {
+  let level = ambientForNight(night);
+  for (const s of sources) {
+    if (s.room !== room) continue;
+    const d = dist(s.at, p);
+    if (d >= s.radius) continue;
+    level = Math.max(level, 1 - (d / s.radius) ** 2);
+  }
+  return Math.min(level, 1);
+}
+
+export type Visibility = 'identified' | 'silhouette' | 'unseen';
+
+/** rules §9: in deep darkness names disappear and colours desaturate, but
+ *  "footsteps and movement remain perceptible" — so darkness must degrade to
+ *  a silhouette, not to nothing. 'unseen' is for a light level of zero only,
+ *  which the ambient floor never reaches. */
+export function visibilityAt(level: number): Visibility {
+  if (level >= IDENTIFY_THRESHOLD) return 'identified';
+  if (level > 0) return 'silhouette';
+  return 'unseen';
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the light model, with §18's escalation as numbers"
+```
+
+---
+
+## Task 5: The simulation tick, movement and room transfer
+
+**Files:**
+- Create: `v12/src/core/movement.ts`, `v12/src/core/sim.ts`
+- Test: `v12/test/movement.test.ts`, `v12/test/sim.test.ts`
+
+**Interfaces:**
+- Consumes: everything from Tasks 1–4
+- Produces:
+  - `const TICK_HZ = 30`, `const DT = 1 / 30`
+  - `interface Input { moveX: number; moveY: number; run: boolean }` (each axis clamped to −1..1)
+  - `interface Actor { id: ActorId; room: RoomId; at: Vec2; alive: boolean; carrying: 'none' | 'lantern' | 'sock' }`
+  - `interface SimState { tick: number; night: number; actors: Actor[]; lanterns: Lantern[] }`
+  - `interface Lantern { id: LanternId; state: { kind: 'held'; by: ActorId } | { kind: 'placed'; room: RoomId; at: Vec2; watching: DoorId; lit: boolean } }`
+  - `createSim(house: House, seed: number, actorIds: ActorId[]): Sim`
+  - `class Sim { readonly state: SimState; step(inputs: Map<ActorId, Input>): void; drain(): MatchEvent[]; lightSources(): LightSource[] }`
+  - `ACTOR_RADIUS`, `WALK_SPEED`, `RUN_SPEED`, `CARRY_SLOWDOWN`
+
+- [ ] **Step 1: Write the failing movement test**
+
+`v12/test/movement.test.ts`:
+
+```ts
+import { stepPosition } from '../src/core/movement';
+import { HOLLOW } from '../src/house/hollow';
+import { roomById } from '../src/core/house';
+
+const kitchen = roomById(HOLLOW, 'kitchen');
+
+describe('stepPosition', () => {
+  it('moves freely inside a room', () => {
+    const from = { x: kitchen.bounds.x + 100, y: kitchen.bounds.y + 100 };
+    const r = stepPosition(HOLLOW, 'kitchen', from, { x: 10, y: 0 });
+    expect(r.room).toBe('kitchen');
+    expect(r.at.x).toBeCloseTo(from.x + 10);
+  });
+
+  it('is stopped by a wall away from any door', () => {
+    const from = { x: kitchen.bounds.x + 10, y: kitchen.bounds.y + 10 };
+    const r = stepPosition(HOLLOW, 'kitchen', from, { x: -500, y: 0 });
+    expect(r.room).toBe('kitchen');
+    expect(r.at.x).toBeGreaterThanOrEqual(kitchen.bounds.x);
+  });
+
+  it('transfers to the neighbouring room when crossing a door span', () => {
+    const door = HOLLOW.doors.find(d => d.id === 'd_kit_lib')!;
+    const from = { x: door.at.x - 20, y: door.at.y };
+    const r = stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 });
+    expect(r.room).toBe('library');
+    expect(r.crossed).toBe('d_kit_lib');
+  });
+
+  it('does not transfer when crossing the same wall outside the door span', () => {
+    const door = HOLLOW.doors.find(d => d.id === 'd_kit_lib')!;
+    const from = { x: door.at.x - 20, y: door.at.y + door.span };
+    const r = stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 });
+    expect(r.room).toBe('kitchen');
+    expect(r.crossed).toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Write the failing determinism test**
+
+This is spec §4 acceptance criterion 5. `v12/test/sim.test.ts`:
+
+```ts
+import { createSim, type Input } from '../src/core/sim';
+import { HOLLOW } from '../src/house/hollow';
+import { makeRng } from '../src/core/rng';
+
+const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+function run(seed: number, ticks: number) {
+  const sim = createSim(HOLLOW, seed, IDS);
+  const rng = makeRng(seed ^ 0xabcdef);
+  const events = [];
+  for (let t = 0; t < ticks; t++) {
+    const inputs = new Map<string, Input>();
+    for (const id of IDS) {
+      inputs.set(id, { moveX: rng() * 2 - 1, moveY: rng() * 2 - 1, run: rng() > 0.8 });
+    }
+    sim.step(inputs);
+    events.push(...sim.drain());
+  }
+  return events;
+}
+
+describe('determinism', () => {
+  it('produces a byte-identical event stream for the same seed and inputs', () => {
+    expect(JSON.stringify(run(1234, 600))).toBe(JSON.stringify(run(1234, 600)));
+  });
+
+  it('diverges for a different seed', () => {
+    expect(JSON.stringify(run(1234, 600))).not.toBe(JSON.stringify(run(1235, 600)));
+  });
+});
+
+describe('sim', () => {
+  it('starts every actor in a distinct room — rules §8', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const rooms = sim.state.actors.map(a => a.room);
+    expect(new Set(rooms).size).toBe(IDS.length);
+  });
+
+  it('advances one tick at a time', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    sim.step(new Map());
+    expect(sim.state.tick).toBe(1);
+  });
+
+  it('emits move.enter when an actor changes room', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const walker = sim.state.actors[0]!;
+    for (let i = 0; i < 600; i++) {
+      sim.step(new Map([[walker.id, { moveX: 1, moveY: 0, run: true }]]));
+    }
+    const enters = sim.drain().filter(e => e.kind === 'move.enter');
+    expect(enters.length).toBeGreaterThan(0);
+  });
+});
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `cd v12 && npx vitest run test/movement.test.ts test/sim.test.ts`
+Expected: FAIL — modules unresolved.
+
+- [ ] **Step 4: Implement movement**
+
+`v12/src/core/movement.ts`:
+
+```ts
+import { clampInside, pointInRect, type Vec2 } from './geometry';
+import { otherSide, roomById, type DoorId, type House, type RoomId } from './house';
+
+export const ACTOR_RADIUS = 14;
+
+export interface StepResult { room: RoomId; at: Vec2; crossed: DoorId | null }
+
+/** Rooms are boxes; doors are gaps of `span` centred on `door.at`. If the
+ *  desired position leaves the room and lies within a door's span, transfer.
+ *  Otherwise clamp. This is deliberately simpler than a navmesh — the house
+ *  is ten rectangles and nothing here needs pathfinding. */
+export function stepPosition(
+  house: House, room: RoomId, from: Vec2, delta: Vec2,
+): StepResult {
+  const bounds = roomById(house, room).bounds;
+  const desired = { x: from.x + delta.x, y: from.y + delta.y };
+
+  if (pointInRect(desired, bounds)) {
+    return { room, at: clampInside(desired, ACTOR_RADIUS, bounds), crossed: null };
+  }
+
+  for (const door of house.doors) {
+    if (door.a !== room && door.b !== room) continue;
+    const half = door.span / 2;
+    const near = Math.abs(desired.x - door.at.x) <= half
+              && Math.abs(desired.y - door.at.y) <= half;
+    if (!near) continue;
+    const to = otherSide(door, room);
+    const toBounds = roomById(house, to).bounds;
+    return {
+      room: to,
+      at: clampInside(desired, ACTOR_RADIUS, toBounds),
+      crossed: door.id,
+    };
+  }
+
+  return { room, at: clampInside(desired, ACTOR_RADIUS, bounds), crossed: null };
+}
+```
+
+- [ ] **Step 5: Implement the sim**
+
+`v12/src/core/sim.ts`:
+
+```ts
+import { makeSink, type ActorId, type EventSink, type LanternId, type MatchEvent } from './events';
+import type { Vec2 } from './geometry';
+import { roomById, type DoorId, type House, type RoomId } from './house';
+import { CARRIED_LANTERN_RADIUS, LANTERN_RADIUS, type LightSource } from './light';
+import { ACTOR_RADIUS, stepPosition } from './movement';
+import { makeRng } from './rng';
+
+export const TICK_HZ = 30;
+export const DT = 1 / TICK_HZ;
+
+export const WALK_SPEED = 110;      // px/s
+export const RUN_SPEED = 190;
+export const CARRY_SLOWDOWN = 0.8;  // rules §10.1 — carrying a lantern is slower
+
+export interface Input { moveX: number; moveY: number; run: boolean }
+
+export interface Actor {
+  id: ActorId; room: RoomId; at: Vec2; alive: boolean;
+  carrying: 'none' | 'lantern' | 'sock';
+}
+
+export type LanternState =
+  | { kind: 'held'; by: ActorId }
+  | { kind: 'placed'; room: RoomId; at: Vec2; watching: DoorId; lit: boolean };
+
+export interface Lantern { id: LanternId; state: LanternState }
+
+export interface SimState {
+  tick: number; night: number; actors: Actor[]; lanterns: Lantern[];
+}
+
+export class Sim {
+  readonly state: SimState;
+  private readonly sink: EventSink = makeSink();
+
+  constructor(readonly house: House, seed: number, actorIds: ActorId[]) {
+    const rng = makeRng(seed);
+    // rules §8: six different starting rooms, one player each, randomised.
+    const pool = this.house.rooms.filter(r => r.id !== 'hearth').map(r => r.id);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = rng.int(i + 1);
+      [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+    }
+    this.state = {
+      tick: 0,
+      night: 1,
+      actors: actorIds.map((id, i) => {
+        const room = pool[i]!;
+        const b = roomById(this.house, room).bounds;
+        return {
+          id, room, alive: true, carrying: 'none' as const,
+          at: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
+        };
+      }),
+      lanterns: [
+        { id: 'lantern_a', state: { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: true } },
+        { id: 'lantern_b', state: { kind: 'placed', room: 'hearth', at: { x: 0, y: 0 }, watching: 'd_hearth_kit', lit: true } },
+      ],
+    };
+    // Park the starting lanterns at their room centres.
+    for (const l of this.state.lanterns) {
+      if (l.state.kind !== 'placed') continue;
+      const b = roomById(this.house, l.state.room).bounds;
+      l.state.at = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    }
+  }
+
+  step(inputs: Map<ActorId, Input>): void {
+    this.state.tick++;
+    for (const actor of this.state.actors) {
+      if (!actor.alive) continue;
+      const input = inputs.get(actor.id);
+      if (!input) continue;
+
+      const len = Math.hypot(input.moveX, input.moveY);
+      if (len === 0) continue;
+      let speed = input.run ? RUN_SPEED : WALK_SPEED;
+      if (actor.carrying === 'lantern') speed *= CARRY_SLOWDOWN;
+
+      const delta = {
+        x: (input.moveX / len) * speed * DT,
+        y: (input.moveY / len) * speed * DT,
+      };
+      const result = stepPosition(this.house, actor.room, actor.at, delta);
+      actor.at = result.at;
+      if (result.crossed) {
+        actor.room = result.room;
+        this.sink.emit({
+          kind: 'move.enter', tick: this.state.tick, night: this.state.night,
+          actor: actor.id, room: result.room, via: result.crossed,
+        });
+      }
+    }
+  }
+
+  lightSources(): LightSource[] {
+    const out: LightSource[] = [];
+    for (const l of this.state.lanterns) {
+      if (l.state.kind === 'placed') {
+        if (l.state.lit) out.push({ room: l.state.room, at: l.state.at, radius: LANTERN_RADIUS });
+      } else {
+        const holder = this.state.actors.find(a => a.id === (l.state as { by: ActorId }).by);
+        if (holder?.alive) {
+          out.push({ room: holder.room, at: holder.at, radius: CARRIED_LANTERN_RADIUS });
+        }
+      }
+    }
+    return out;
+  }
+
+  drain(): MatchEvent[] { return this.sink.drain(); }
+}
+
+export function createSim(house: House, seed: number, actorIds: ActorId[]): Sim {
+  return new Sim(house, seed, actorIds);
+}
+
+export { ACTOR_RADIUS };
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS. The determinism test is the load-bearing one — if it fails, stop and find the nondeterminism before continuing. Everything after this depends on it.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the deterministic tick, movement and room transfer"
+```
+
+---
+
+## Task 5A: Doors that close, and hiding
+
+Spec §4 lists "open and close doors" and "hide briefly behind furniture" in slice 0's scope, and rules §9 grants both to every player. A closed door is the cheapest tactic in the game and the only thing that makes the Take's warning window survivable in an open-plan house.
+
+**Files:**
+- Modify: `v12/src/core/movement.ts` (block closed doors), `v12/src/core/sim.ts` (door state, hiding)
+- Test: `v12/test/doors.test.ts`
+
+**Interfaces:**
+- Consumes: `stepPosition`, `Sim`, `Actor`
+- Produces:
+  - `stepPosition(house, room, from, delta, closed: ReadonlySet<DoorId>): StepResult` — **note the added fifth parameter**
+  - On `SimState`: `closedDoors: Set<DoorId>`
+  - On `Actor`: `hiddenUntilTick: number` (0 when not hiding)
+  - `const HIDE_TICKS = 60` (2 s)
+  - On `Sim`: `toggleDoor(actorId, doorId): { ok: boolean; reason?: string }`, `beginHide(actorId): { ok: boolean; reason?: string }`, `isHidden(actorId): boolean`
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/doors.test.ts`:
+
+```ts
+import { createSim, HIDE_TICKS } from '../src/core/sim';
+import { canTake } from '../src/core/take';
+import { stepPosition } from '../src/core/movement';
+import { HOLLOW } from '../src/house/hollow';
+
+const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+describe('closed doors', () => {
+  it('blocks a crossing that would otherwise succeed', () => {
+    const door = HOLLOW.doors.find(d => d.id === 'd_kit_lib')!;
+    const from = { x: door.at.x - 20, y: door.at.y };
+    expect(stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 }, new Set()).room).toBe('library');
+    expect(stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 }, new Set(['d_kit_lib'])).room)
+      .toBe('kitchen');
+  });
+});
+
+describe('toggleDoor', () => {
+  it('closes and reopens a door of the room you are standing in, and emits both', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const actor = sim.state.actors[0]!;
+    actor.room = 'kitchen';
+    expect(sim.toggleDoor(actor.id, 'd_kit_lib').ok).toBe(true);
+    expect(sim.state.closedDoors.has('d_kit_lib')).toBe(true);
+    expect(sim.toggleDoor(actor.id, 'd_kit_lib').ok).toBe(true);
+    expect(sim.state.closedDoors.has('d_kit_lib')).toBe(false);
+    const kinds = sim.drain().filter(e => e.kind === 'door.toggle');
+    expect(kinds).toHaveLength(2);
+  });
+
+  it('refuses a door that is not an exit of your room', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    sim.state.actors[0]!.room = 'kitchen';
+    expect(sim.toggleDoor(sim.state.actors[0]!.id, 'd_bath_attic').ok).toBe(false);
+  });
+});
+
+describe('hiding', () => {
+  function pairInDark() {
+    const sim = createSim(HOLLOW, 42, IDS);
+    sim.state.night = 6;
+    const b = HOLLOW.rooms.find(r => r.id === 'attic')!.bounds;
+    const spot = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    for (const id of ['wren', 'pike']) {
+      const a = sim.state.actors.find(x => x.id === id)!;
+      a.room = 'attic'; a.at = { ...spot };
+    }
+    for (const a of sim.state.actors) {
+      if (a.id === 'wren' || a.id === 'pike') continue;
+      a.room = 'shared_bedroom';
+    }
+    return sim;
+  }
+
+  // rules §9 — hide BRIEFLY. It must expire on its own.
+  it('lasts HIDE_TICKS and then ends', () => {
+    const sim = pairInDark();
+    sim.beginHide('pike');
+    expect(sim.isHidden('pike')).toBe(true);
+    for (let i = 0; i < HIDE_TICKS; i++) sim.step(new Map());
+    expect(sim.isHidden('pike')).toBe(false);
+  });
+
+  it('makes you an invalid Take target while it lasts', () => {
+    const sim = pairInDark();
+    expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
+    sim.beginHide('pike');
+    expect(canTake(sim, 'wren', 'pike').ok).toBe(false);
+  });
+
+  // A hidden child cannot also be the witness that protects someone else —
+  // otherwise hiding would be strictly better than standing guard, and
+  // rules §19's anti-turtling would invert.
+  it('does not let a hidden child count as an intervening witness', () => {
+    const sim = pairInDark();
+    const clem = sim.state.actors.find(a => a.id === 'clem')!;
+    const pike = sim.state.actors.find(a => a.id === 'pike')!;
+    clem.room = 'attic';
+    clem.at = { x: pike.at.x + 30, y: pike.at.y };
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'witness' });
+    sim.beginHide('clem');
+    expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
+  });
+
+  it('refuses to hide while carrying anything', () => {
+    const sim = pairInDark();
+    sim.state.actors.find(a => a.id === 'pike')!.carrying = 'lantern';
+    expect(sim.beginHide('pike').ok).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/doors.test.ts`
+Expected: FAIL — `stepPosition` takes four arguments, `toggleDoor` is not a function.
+
+- [ ] **Step 3: Add the closed-door parameter to movement**
+
+In `v12/src/core/movement.ts`, change the signature and add one guard:
+
+```ts
+export function stepPosition(
+  house: House, room: RoomId, from: Vec2, delta: Vec2,
+  closed: ReadonlySet<DoorId> = new Set(),
+): StepResult {
+```
+
+and inside the door loop, immediately after `if (door.a !== room && door.b !== room) continue;`:
+
+```ts
+    if (closed.has(door.id)) continue;   // a closed door is a wall
+```
+
+The default empty set keeps Task 5's tests passing unchanged.
+
+- [ ] **Step 4: Add door state and hiding to Sim**
+
+In `v12/src/core/sim.ts`:
+
+Add `export const HIDE_TICKS = 60;` beside the other constants.
+
+Add `hiddenUntilTick: number;` to `Actor`, and `closedDoors: Set<DoorId>;` to `SimState`.
+
+In the constructor, initialise `hiddenUntilTick: 0` on every actor and `closedDoors: new Set()` on the state.
+
+In `step`, pass the closed set through: `stepPosition(this.house, actor.room, actor.at, delta, this.state.closedDoors)`.
+
+Add three methods to `Sim`:
+
+```ts
+  isHidden(id: ActorId): boolean {
+    const a = this.state.actors.find(x => x.id === id);
+    return !!a && a.hiddenUntilTick > this.state.tick;
+  }
+
+  /** rules §9 — hide BRIEFLY behind furniture. Brief is the whole point: it
+   *  buys you the length of a Take's warning window and nothing more. */
+  beginHide(id: ActorId): { ok: boolean; reason?: string } {
+    const a = this.state.actors.find(x => x.id === id);
+    if (!a?.alive) return { ok: false, reason: 'no such living actor' };
+    if (a.carrying !== 'none') return { ok: false, reason: 'carrying something' };
+    a.hiddenUntilTick = this.state.tick + HIDE_TICKS;
+    return { ok: true };
+  }
+
+  toggleDoor(actorId: ActorId, doorId: DoorId): { ok: boolean; reason?: string } {
+    const a = this.state.actors.find(x => x.id === actorId);
+    if (!a?.alive) return { ok: false, reason: 'no such living actor' };
+    if (!exitsOf(this.house, a.room).some(d => d.id === doorId)) {
+      return { ok: false, reason: 'that door is not an exit of this room' };
+    }
+    const open = this.state.closedDoors.delete(doorId);
+    if (!open) this.state.closedDoors.add(doorId);
+    this.sink.emit({
+      kind: 'door.toggle', tick: this.state.tick, night: this.state.night,
+      actor: actorId, door: doorId, open,
+    });
+    return { ok: true };
+  }
+```
+
+Add `exitsOf` to the imports from `./house`.
+
+- [ ] **Step 5: Teach the Take about hiding**
+
+In `v12/src/core/take.ts`, inside `canTake`, immediately after the `taker.carrying === 'sock'` check:
+
+```ts
+  // rules §9 — a hidden child is not there to be taken
+  if (sim.isHidden(victimId)) return { ok: false, reason: 'out-of-contact' };
+```
+
+and in the witness check, exclude hidden children:
+
+```ts
+  const witness = sim.state.actors.some(a =>
+    a.alive && a.id !== takerId && a.id !== victimId && !sim.isHidden(a.id)
+    && a.room === victim.room && dist(a.at, victim.at) <= INTERVENE_RADIUS);
+```
+
+- [ ] **Step 6: Wire the keys**
+
+In `v12/src/app/input.ts` — **do this when Task 11 creates the file, not now** — extend `UiAction` with `'door' | 'hide'`, mapping `KeyF` to `'door'` and `KeyC` to `'hide'`. Note this here so Task 11's implementer does not have to rediscover it.
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS, including Task 5's original movement tests, which use the defaulted fifth parameter.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): doors that close, and somewhere to hide"
+```
+
+---
+
+## Task 6: Lanterns — carry, place, snuff, relight
+
+**Files:**
+- Create: `v12/src/core/lantern.ts`
+- Modify: `v12/src/core/sim.ts` (wire the actions into `step`)
+- Test: `v12/test/lantern.test.ts`
+
+**Interfaces:**
+- Consumes: `Sim`, `Actor`, `Lantern` from `core/sim`
+- Produces: `type LanternAction = { kind: 'pickup'; lantern: LanternId } | { kind: 'place'; watching: DoorId } | { kind: 'snuff'; lantern: LanternId } | { kind: 'relight'; lantern: LanternId }`; `applyLanternAction(sim, actorId, action): { ok: boolean; reason?: string }`
+- Also extends `Input` with `action?: LanternAction`
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/lantern.test.ts`:
+
+```ts
+import { createSim } from '../src/core/sim';
+import { applyLanternAction } from '../src/core/lantern';
+import { HOLLOW } from '../src/house/hollow';
+
+const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+function simWithActorAt(room: string) {
+  const sim = createSim(HOLLOW, 42, IDS);
+  sim.state.actors[0]!.room = room;
+  const b = HOLLOW.rooms.find(r => r.id === room)!.bounds;
+  sim.state.actors[0]!.at = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  return sim;
+}
+
+describe('lantern actions', () => {
+  it('picks up a placed lantern in the same room', () => {
+    const sim = simWithActorAt('shared_bedroom');
+    const r = applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
+    expect(r.ok).toBe(true);
+    expect(sim.state.lanterns[0]!.state).toEqual({ kind: 'held', by: 'bell' });
+    expect(sim.state.actors[0]!.carrying).toBe('lantern');
+  });
+
+  it('refuses to pick up a lantern in another room', () => {
+    const sim = simWithActorAt('attic');
+    expect(applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' }).ok).toBe(false);
+  });
+
+  // rules §11.4 — you cannot hold a lantern while carrying a sock
+  it('refuses to pick up a lantern while carrying a sock', () => {
+    const sim = simWithActorAt('shared_bedroom');
+    sim.state.actors[0]!.carrying = 'sock';
+    const r = applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/sock/i);
+  });
+
+  // rules §10.2 — a placed lantern records movement through ONE doorway of
+  // the placer's choosing
+  it('places a lantern watching a chosen door and emits the choice', () => {
+    const sim = simWithActorAt('kitchen');
+    applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
+    sim.state.actors[0]!.room = 'kitchen';
+    const r = applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_kit_lib' });
+    expect(r.ok).toBe(true);
+    const placed = sim.state.lanterns[0]!.state;
+    expect(placed).toMatchObject({ kind: 'placed', room: 'kitchen', watching: 'd_kit_lib', lit: true });
+    expect(sim.drain().some(e => e.kind === 'lantern.place' && e.watching === 'd_kit_lib')).toBe(true);
+  });
+
+  it('refuses to watch a door that is not an exit of the room', () => {
+    const sim = simWithActorAt('kitchen');
+    applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
+    sim.state.actors[0]!.room = 'kitchen';
+    expect(applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_bath_attic' }).ok).toBe(false);
+  });
+
+  it('snuffing unlights a placed lantern and relighting restores it', () => {
+    const sim = simWithActorAt('shared_bedroom');
+    expect(applyLanternAction(sim, 'bell', { kind: 'snuff', lantern: 'lantern_a' }).ok).toBe(true);
+    expect(sim.lightSources().some(s => s.room === 'shared_bedroom')).toBe(false);
+    expect(applyLanternAction(sim, 'bell', { kind: 'relight', lantern: 'lantern_a' }).ok).toBe(true);
+    expect(sim.lightSources().some(s => s.room === 'shared_bedroom')).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/lantern.test.ts`
+Expected: FAIL — cannot resolve `../src/core/lantern`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/core/lantern.ts`:
+
+```ts
+import type { ActorId, LanternId } from './events';
+import { exitsOf, type DoorId } from './house';
+import type { Sim } from './sim';
+
+export type LanternAction =
+  | { kind: 'pickup'; lantern: LanternId }
+  | { kind: 'place'; watching: DoorId }
+  | { kind: 'snuff'; lantern: LanternId }
+  | { kind: 'relight'; lantern: LanternId };
+
+export interface ActionResult { ok: boolean; reason?: string }
+
+export function applyLanternAction(
+  sim: Sim, actorId: ActorId, action: LanternAction,
+): ActionResult {
+  const actor = sim.state.actors.find(a => a.id === actorId);
+  if (!actor?.alive) return { ok: false, reason: 'no such living actor' };
+  const emit = (kind: 'lantern.carry' | 'lantern.place' | 'lantern.snuff' | 'lantern.relight',
+                lantern: LanternId, watching?: DoorId) =>
+    sim.emitLantern(kind, actorId, lantern, actor.room, watching);
+
+  switch (action.kind) {
+    case 'pickup': {
+      // rules §11.4 — you cannot hold a lantern while carrying a sock
+      if (actor.carrying === 'sock') return { ok: false, reason: 'carrying a sock' };
+      if (actor.carrying === 'lantern') return { ok: false, reason: 'already carrying a lantern' };
+      const l = sim.state.lanterns.find(x => x.id === action.lantern);
+      if (!l) return { ok: false, reason: 'no such lantern' };
+      if (l.state.kind !== 'placed') return { ok: false, reason: 'lantern is held' };
+      if (l.state.room !== actor.room) return { ok: false, reason: 'lantern is elsewhere' };
+      l.state = { kind: 'held', by: actorId };
+      actor.carrying = 'lantern';
+      emit('lantern.carry', l.id);
+      return { ok: true };
+    }
+    case 'place': {
+      const l = sim.state.lanterns.find(
+        x => x.state.kind === 'held' && x.state.by === actorId);
+      if (!l) return { ok: false, reason: 'not carrying a lantern' };
+      // rules §10.2 — the watched doorway must be one of this room's exits
+      if (!exitsOf(sim.house, actor.room).some(d => d.id === action.watching)) {
+        return { ok: false, reason: 'that door is not an exit of this room' };
+      }
+      l.state = {
+        kind: 'placed', room: actor.room, at: { ...actor.at },
+        watching: action.watching, lit: true,
+      };
+      actor.carrying = 'none';
+      emit('lantern.place', l.id, action.watching);
+      return { ok: true };
+    }
+    case 'snuff':
+    case 'relight': {
+      const l = sim.state.lanterns.find(x => x.id === action.lantern);
+      if (!l) return { ok: false, reason: 'no such lantern' };
+      if (l.state.kind !== 'placed') return { ok: false, reason: 'lantern is held' };
+      if (l.state.room !== actor.room) return { ok: false, reason: 'lantern is elsewhere' };
+      l.state.lit = action.kind === 'relight';
+      emit(action.kind === 'snuff' ? 'lantern.snuff' : 'lantern.relight', l.id);
+      return { ok: true };
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Expose what the action module needs from Sim**
+
+`house` is already `readonly` on `Sim` (Task 5), so the action module can read it. Add this method to `Sim` in `v12/src/core/sim.ts` — it is the only door the action modules get into the event sink:
+
+```ts
+  emitLantern(
+    kind: 'lantern.carry' | 'lantern.place' | 'lantern.snuff' | 'lantern.relight',
+    actor: ActorId, lantern: LanternId, room: RoomId, watching?: DoorId,
+  ): void {
+    this.sink.emit({ kind, tick: this.state.tick, night: this.state.night, actor, lantern, room, watching });
+  }
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): lanterns, and §10.2's one watched doorway"
+```
+
+---
+
+## Task 7: The Take
+
+**Files:**
+- Create: `v12/src/core/take.ts`
+- Test: `v12/test/take.test.ts`
+
+**Interfaces:**
+- Consumes: `Sim`, `Actor`; `lightAt`, `DARK_ENOUGH_FOR_TAKE`, `LANTERN_RADIUS` from `core/light`; `dist` from `core/geometry`
+- Produces:
+  - `const CONTACT_RADIUS = 40`, `const INTERVENE_RADIUS = 200`, `const TAKE_TICKS = 45` (1.5 s), `const WARN_AT_TICKS = 15`
+  - `type TakeBlock = 'too-lit' | 'lantern-protected' | 'witness' | 'out-of-contact' | 'night-one' | 'carrying'`
+  - `canTake(sim: Sim, taker: ActorId, victim: ActorId): { ok: true } | { ok: false; reason: TakeBlock }`
+  - `class TakeAttempt { tick(sim: Sim): 'warned' | 'progressing' | 'broken' | 'complete' }`
+  - `beginTake(taker: ActorId, victim: ActorId): TakeAttempt`
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/take.test.ts`:
+
+```ts
+import { createSim } from '../src/core/sim';
+import { applyLanternAction } from '../src/core/lantern';
+import { canTake, beginTake, TAKE_TICKS, WARN_AT_TICKS } from '../src/core/take';
+import { HOLLOW } from '../src/house/hollow';
+
+const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+function pairInDarkRoom(night = 6) {
+  const sim = createSim(HOLLOW, 42, IDS);
+  sim.state.night = night;
+  const b = HOLLOW.rooms.find(r => r.id === 'attic')!.bounds;
+  const spot = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  for (const id of ['wren', 'pike']) {
+    const a = sim.state.actors.find(x => x.id === id)!;
+    a.room = 'attic';
+    a.at = { ...spot };
+  }
+  // Move everyone else far away so they cannot intervene.
+  for (const a of sim.state.actors) {
+    if (a.id === 'wren' || a.id === 'pike') continue;
+    a.room = 'shared_bedroom';
+    const c = HOLLOW.rooms.find(r => r.id === 'shared_bedroom')!.bounds;
+    a.at = { x: c.x + 20, y: c.y + 20 };
+  }
+  return sim;
+}
+
+describe('canTake', () => {
+  it('allows a Take in a dark room with contact and no witness', () => {
+    expect(canTake(pairInDarkRoom(), 'wren', 'pike')).toEqual({ ok: true });
+  });
+
+  // rules §8 — no Take is possible on Night One
+  it('refuses on night one', () => {
+    const r = canTake(pairInDarkRoom(1), 'wren', 'pike');
+    expect(r).toEqual({ ok: false, reason: 'night-one' });
+  });
+
+  // rules §12.1 — available when the room is dark enough
+  it('refuses in a lit room', () => {
+    const r = canTake(pairInDarkRoom(2), 'wren', 'pike');
+    expect(r).toEqual({ ok: false, reason: 'too-lit' });
+  });
+
+  // rules §10.2 — a placed lantern prevents Takes inside its radius
+  it('refuses inside a placed lantern radius', () => {
+    const sim = pairInDarkRoom();
+    const wren = sim.state.actors.find(a => a.id === 'wren')!;
+    wren.carrying = 'none';
+    sim.state.lanterns[0]!.state = {
+      kind: 'placed', room: 'attic', at: { ...wren.at }, watching: 'd_bath_attic', lit: true,
+    };
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'lantern-protected' });
+  });
+
+  // rules §12.1 — no second living child close enough to intervene
+  it('refuses when a third living child is close enough to intervene', () => {
+    const sim = pairInDarkRoom();
+    const witness = sim.state.actors.find(a => a.id === 'clem')!;
+    const victim = sim.state.actors.find(a => a.id === 'pike')!;
+    witness.room = 'attic';
+    witness.at = { x: victim.at.x + 30, y: victim.at.y };
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'witness' });
+  });
+
+  it('refuses out of contact range', () => {
+    const sim = pairInDarkRoom();
+    const victim = sim.state.actors.find(a => a.id === 'pike')!;
+    victim.at = { x: victim.at.x + 400, y: victim.at.y };
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'out-of-contact' });
+  });
+
+  // rules §11.4 — carrying a sock blocks your special action
+  it('refuses while the taker carries a sock', () => {
+    const sim = pairInDarkRoom();
+    sim.state.actors.find(a => a.id === 'wren')!.carrying = 'sock';
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'carrying' });
+  });
+});
+
+describe('TakeAttempt', () => {
+  // rules §12.1 — a Take is not instant; the target gets a brief warning
+  it('warns before it completes', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    const results: string[] = [];
+    for (let i = 0; i < TAKE_TICKS + 2; i++) results.push(attempt.tick(sim));
+    expect(results[WARN_AT_TICKS - 1]).toBe('warned');
+    expect(results[TAKE_TICKS - 1]).toBe('complete');
+    expect(sim.drain().some(e => e.kind === 'take.warn')).toBe(true);
+  });
+
+  it('breaks when the victim reaches lantern light', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    for (let i = 0; i < WARN_AT_TICKS + 2; i++) attempt.tick(sim);
+    const victim = sim.state.actors.find(a => a.id === 'pike')!;
+    sim.state.lanterns[0]!.state = {
+      kind: 'placed', room: 'attic', at: { ...victim.at }, watching: 'd_bath_attic', lit: true,
+    };
+    expect(attempt.tick(sim)).toBe('broken');
+  });
+
+  it('kills the victim and emits take.complete exactly once', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    for (let i = 0; i < TAKE_TICKS + 5; i++) attempt.tick(sim);
+    expect(sim.state.actors.find(a => a.id === 'pike')!.alive).toBe(false);
+    expect(sim.drain().filter(e => e.kind === 'take.complete')).toHaveLength(1);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/take.test.ts`
+Expected: FAIL — cannot resolve `../src/core/take`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/core/take.ts`:
+
+```ts
+import type { ActorId } from './events';
+import { dist } from './geometry';
+import { DARK_ENOUGH_FOR_TAKE, LANTERN_RADIUS, lightAt } from './light';
+import type { Sim } from './sim';
+
+export const CONTACT_RADIUS = 40;
+export const INTERVENE_RADIUS = 200;
+export const TAKE_TICKS = 45;      // 1.5 s at 30 Hz
+export const WARN_AT_TICKS = 15;   // 0.5 s of warning before it lands
+
+export type TakeBlock =
+  | 'too-lit' | 'lantern-protected' | 'witness'
+  | 'out-of-contact' | 'night-one' | 'carrying';
+
+export type TakeCheck = { ok: true } | { ok: false; reason: TakeBlock };
+
+export function canTake(sim: Sim, takerId: ActorId, victimId: ActorId): TakeCheck {
+  // rules §8 — no Take is possible on Night One. The victim would have no
+  // information with which to have chosen differently.
+  if (sim.state.night <= 1) return { ok: false, reason: 'night-one' };
+
+  const taker = sim.state.actors.find(a => a.id === takerId);
+  const victim = sim.state.actors.find(a => a.id === victimId);
+  if (!taker?.alive || !victim?.alive) return { ok: false, reason: 'out-of-contact' };
+
+  // rules §11.4 — carrying a sock blocks your special action
+  if (taker.carrying === 'sock') return { ok: false, reason: 'carrying' };
+
+  if (taker.room !== victim.room) return { ok: false, reason: 'out-of-contact' };
+  if (dist(taker.at, victim.at) > CONTACT_RADIUS) return { ok: false, reason: 'out-of-contact' };
+
+  // rules §10.2 — a placed lantern prevents Takes inside its radius. Checked
+  // before ambient so the two blocks stay distinguishable to the caller: the
+  // UI needs to say WHICH rule stopped you, or the rule cannot be learned.
+  for (const l of sim.state.lanterns) {
+    if (l.state.kind !== 'placed' || !l.state.lit) continue;
+    if (l.state.room !== victim.room) continue;
+    if (dist(l.state.at, victim.at) < LANTERN_RADIUS) {
+      return { ok: false, reason: 'lantern-protected' };
+    }
+  }
+
+  const level = lightAt(sim.state.night, victim.room, victim.at, sim.lightSources());
+  if (level >= DARK_ENOUGH_FOR_TAKE) return { ok: false, reason: 'too-lit' };
+
+  // rules §12.1 — no second living child close enough to intervene
+  const witness = sim.state.actors.some(a =>
+    a.alive && a.id !== takerId && a.id !== victimId
+    && a.room === victim.room && dist(a.at, victim.at) <= INTERVENE_RADIUS);
+  if (witness) return { ok: false, reason: 'witness' };
+
+  return { ok: true };
+}
+
+export type TakeTick = 'warned' | 'progressing' | 'broken' | 'complete';
+
+export class TakeAttempt {
+  private elapsed = 0;
+  private done = false;
+  constructor(readonly taker: ActorId, readonly victim: ActorId) {}
+
+  tick(sim: Sim): TakeTick {
+    if (this.done) return 'complete';
+    const check = canTake(sim, this.taker, this.victim);
+    if (!check.ok) return 'broken';
+
+    this.elapsed++;
+    const victim = sim.state.actors.find(a => a.id === this.victim)!;
+
+    if (this.elapsed === WARN_AT_TICKS) {
+      sim.emitTake('take.warn', this.taker, this.victim, victim.room);
+      return 'warned';
+    }
+    if (this.elapsed >= TAKE_TICKS) {
+      victim.alive = false;
+      this.done = true;
+      sim.emitTake('take.complete', this.taker, this.victim, victim.room);
+      // rules §12.1 — a muffled sound audible on that floor
+      sim.emitSound('take', victim.room);
+      return 'complete';
+    }
+    return 'progressing';
+  }
+}
+
+export function beginTake(taker: ActorId, victim: ActorId): TakeAttempt {
+  return new TakeAttempt(taker, victim);
+}
+```
+
+- [ ] **Step 4: Add the two emit doors to Sim**
+
+In `v12/src/core/sim.ts`, add to `Sim`:
+
+```ts
+  emitTake(kind: 'take.warn' | 'take.complete', actor: ActorId, victim: ActorId, room: RoomId): void {
+    this.sink.emit({ kind, tick: this.state.tick, night: this.state.night, actor, victim, room });
+  }
+
+  emitSound(sound: 'take' | 'snuff' | 'slip' | 'shed', room: RoomId): void {
+    this.sink.emit({
+      kind: 'sound', tick: this.state.tick, night: this.state.night,
+      floor: roomById(this.house, room).floor, sound, room,
+    });
+  }
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the Take, with every §12.1 condition under test"
+```
+
+---
+
+## Task 8: The scripted stalker
+
+**Files:**
+- Create: `v12/src/scripted/stalker.ts`
+- Test: `v12/test/stalker.test.ts`
+
+**Interfaces:**
+- Consumes: `Sim`, `Input`, `House`, `makeRng`, `beginTake`, `canTake`
+- Produces: `createStalker(house: House, id: ActorId, seed: number): Stalker` with `Stalker { nextInput(sim: Sim): Input; tickBehaviour(sim: Sim): void }`
+
+**Constraint (spec §9.1):** this is a scripted actor, not a policy bot. It exposes **no counters, no metrics, no win-rate API**. If a future task wants a number out of it, that is the signal to stop and read spec §9.1 first.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/stalker.test.ts`:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createSim } from '../src/core/sim';
+import { createStalker } from '../src/scripted/stalker';
+import { HOLLOW } from '../src/house/hollow';
+
+const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+function walk(seed: number, ticks: number) {
+  const sim = createSim(HOLLOW, 99, IDS);
+  const stalker = createStalker(HOLLOW, 'wren', seed);
+  const path: string[] = [];
+  for (let t = 0; t < ticks; t++) {
+    sim.step(new Map([['wren', stalker.nextInput(sim)]]));
+    stalker.tickBehaviour(sim);
+    path.push(sim.state.actors.find(a => a.id === 'wren')!.room);
+  }
+  return path;
+}
+
+describe('scripted stalker', () => {
+  it('follows an identical path for the same seed', () => {
+    expect(walk(7, 900)).toEqual(walk(7, 900));
+  });
+
+  it('follows a different path for a different seed', () => {
+    expect(walk(7, 900)).not.toEqual(walk(8, 900));
+  });
+
+  it('actually leaves its starting room', () => {
+    expect(new Set(walk(7, 900)).size).toBeGreaterThan(1);
+  });
+
+  // spec §9.1 — a scripted actor, never a measurement instrument
+  it('exposes no metrics surface', () => {
+    const src = readFileSync(join(__dirname, '..', 'src/scripted/stalker.ts'), 'utf8');
+    expect(src).not.toMatch(/winRate|stats|metrics|counter|tally/i);
+    const stalker = createStalker(HOLLOW, 'wren', 7);
+    expect(Object.keys(stalker).sort()).toEqual(['nextInput', 'tickBehaviour']);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/stalker.test.ts`
+Expected: FAIL — cannot resolve `../src/scripted/stalker`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/scripted/stalker.ts`:
+
+```ts
+import type { ActorId } from '../core/events';
+import { exitsOf, otherSide, roomById, type House, type RoomId } from '../core/house';
+import { makeRng } from '../core/rng';
+import type { Input, Sim } from '../core/sim';
+import { beginTake, canTake, type TakeAttempt } from '../core/take';
+
+export interface Stalker {
+  nextInput(sim: Sim): Input;
+  tickBehaviour(sim: Sim): void;
+}
+
+/** SPEC §9.1: this is a scripted actor and it never produces a number.
+ *  It walks a seeded route and attempts a Take when the rules already allow
+ *  one. It does not evaluate, score, adapt, or report. If you find yourself
+ *  wanting a win rate out of it, that is the signal to read spec §9.1 —
+ *  bot defects have mimicked rules defects three times in this repository. */
+export function createStalker(house: House, id: ActorId, seed: number): Stalker {
+  const rng = makeRng(seed);
+  let route: RoomId[] = [];
+  let attempt: TakeAttempt | null = null;
+
+  function extendRoute(from: RoomId): void {
+    let here = from;
+    for (let i = 0; i < 8; i++) {
+      const exits = exitsOf(house, here);
+      const door = rng.pick(exits);
+      here = otherSide(door, here);
+      route.push(here);
+    }
+  }
+
+  return {
+    nextInput(sim: Sim): Input {
+      const self = sim.state.actors.find(a => a.id === id);
+      if (!self?.alive) return { moveX: 0, moveY: 0, run: false };
+      if (route.length === 0) extendRoute(self.room);
+
+      const target = route[0]!;
+      if (self.room === target) { route.shift(); }
+
+      const next = route[0];
+      if (!next) return { moveX: 0, moveY: 0, run: false };
+
+      // Steer toward the door that leads to the next room on the route. If no
+      // such door exists the route is stale, so drop it and re-plan next tick.
+      const door = exitsOf(house, self.room).find(d => otherSide(d, self.room) === next);
+      if (!door) { route = []; return { moveX: 0, moveY: 0, run: false }; }
+
+      const dx = door.at.x - self.at.x, dy = door.at.y - self.at.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) return { moveX: 0, moveY: 0, run: false };
+      return { moveX: dx / len, moveY: dy / len, run: false };
+    },
+
+    tickBehaviour(sim: Sim): void {
+      if (attempt) {
+        const r = attempt.tick(sim);
+        if (r === 'complete' || r === 'broken') attempt = null;
+        return;
+      }
+      const self = sim.state.actors.find(a => a.id === id);
+      if (!self?.alive) return;
+      for (const other of sim.state.actors) {
+        if (other.id === id || !other.alive) continue;
+        if (canTake(sim, id, other.id).ok) { attempt = beginTake(id, other.id); return; }
+      }
+    },
+  };
+}
+```
+
+Also remove the now-unused `roomById` import if the linter flags it.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): a scripted stalker that never produces a number"
+```
+
+---
+
+## Task 9: The render layer — stage, rooms and the light mask
+
+**Files:**
+- Create: `v12/src/render/stage.ts`, `v12/src/render/rooms.ts`, `v12/src/render/lighting.ts`
+- Test: `v12/test/lighting.test.ts`
+
+**Interfaces:**
+- Consumes: `House`, `Room`, `SimState`, `LightSource`, `ambientForNight`
+- Produces:
+  - `createStage(el: HTMLElement): Promise<Stage>` where `Stage { app: Application; world: Container; centreOn(p: Vec2): void }`
+  - `drawRooms(world: Container, house: House): void`
+  - `maskCirclesFor(sources: readonly LightSource[], house: House): MaskCircle[]` where `interface MaskCircle { x: number; y: number; r: number }`
+  - `drawLighting(layer: Graphics, house: House, night: number, sources: readonly LightSource[]): void`
+
+The mask **geometry** is a pure function and is tested. The Pixi draw call is not — it is verified by eye in Task 12.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/lighting.test.ts`:
+
+```ts
+import { maskCirclesFor, overlayAlphaFor } from '../src/render/lighting';
+import { HOLLOW } from '../src/house/hollow';
+import { LANTERN_RADIUS } from '../src/core/light';
+
+describe('maskCirclesFor', () => {
+  it('produces one circle per source, positioned at the source', () => {
+    const circles = maskCirclesFor(
+      [{ room: 'kitchen', at: { x: 10, y: 20 }, radius: LANTERN_RADIUS }], HOLLOW);
+    expect(circles).toEqual([{ x: 10, y: 20, r: LANTERN_RADIUS }]);
+  });
+
+  it('drops sources in rooms the house does not have', () => {
+    expect(maskCirclesFor(
+      [{ room: 'no_such_room', at: { x: 0, y: 0 }, radius: 50 }], HOLLOW)).toEqual([]);
+  });
+
+  it('is empty with no sources', () => {
+    expect(maskCirclesFor([], HOLLOW)).toEqual([]);
+  });
+});
+
+describe('overlayAlphaFor', () => {
+  // The darkness overlay must never reach full opacity: rules §6.2 says
+  // darkness may conceal identity and detail but must NEVER obscure
+  // navigation. An alpha of 1 would do exactly that.
+  it('never fully blacks out, even on night six', () => {
+    for (let n = 1; n <= 6; n++) {
+      expect(overlayAlphaFor(n)).toBeLessThan(1);
+      expect(overlayAlphaFor(n)).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('darkens monotonically across the nights', () => {
+    for (let n = 2; n <= 6; n++) {
+      expect(overlayAlphaFor(n)).toBeGreaterThanOrEqual(overlayAlphaFor(n - 1));
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/lighting.test.ts`
+Expected: FAIL — cannot resolve `../src/render/lighting`.
+
+- [ ] **Step 3: Implement lighting**
+
+`v12/src/render/lighting.ts`:
+
+```ts
+import { Graphics } from 'pixi.js';
+import { ambientForNight, type LightSource } from '../core/light';
+import type { House } from '../core/house';
+
+export interface MaskCircle { x: number; y: number; r: number }
+
+export function maskCirclesFor(
+  sources: readonly LightSource[], house: House,
+): MaskCircle[] {
+  return sources
+    .filter(s => house.rooms.some(r => r.id === s.room))
+    .map(s => ({ x: s.at.x, y: s.at.y, r: s.radius }));
+}
+
+/** rules §6.2: darkness may conceal identity and detail, but must NEVER
+ *  obscure navigation. So the overlay is capped well below opaque — the
+ *  room silhouette and its exits stay legible at every night. */
+const MAX_OVERLAY = 0.92;
+
+export function overlayAlphaFor(night: number): number {
+  return Math.min((1 - ambientForNight(night)) * MAX_OVERLAY, MAX_OVERLAY);
+}
+
+export function drawLighting(
+  layer: Graphics, house: House, night: number, sources: readonly LightSource[],
+): void {
+  layer.clear();
+  for (const room of house.rooms) {
+    layer.rect(room.bounds.x, room.bounds.y, room.bounds.w, room.bounds.h);
+  }
+  layer.fill({ color: 0x05040a, alpha: overlayAlphaFor(night) });
+
+  // Warm pools punched back out of the dark — rules §21's "warm pools of
+  // lantern light against cold muted surroundings".
+  for (const c of maskCirclesFor(sources, house)) {
+    for (let i = 3; i >= 1; i--) {
+      layer.circle(c.x, c.y, (c.r / 3) * i);
+      layer.fill({ color: 0xffd9a0, alpha: 0.10 * (4 - i) });
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Implement stage and rooms**
+
+`v12/src/render/stage.ts`:
+
+```ts
+import { Application, Container } from 'pixi.js';
+import type { Vec2 } from '../core/geometry';
+
+export interface Stage { app: Application; world: Container; centreOn(p: Vec2): void }
+
+export async function createStage(el: HTMLElement): Promise<Stage> {
+  const app = new Application();
+  await app.init({ background: 0x0b0a10, resizeTo: window, antialias: true });
+  el.appendChild(app.canvas);
+  const world = new Container();
+  app.stage.addChild(world);
+  return {
+    app, world,
+    centreOn(p) {
+      world.x = app.screen.width / 2 - p.x;
+      world.y = app.screen.height / 2 - p.y;
+    },
+  };
+}
+```
+
+`v12/src/render/rooms.ts`:
+
+```ts
+import { Container, Graphics, Text } from 'pixi.js';
+import type { House } from '../core/house';
+
+/** rules §6.2: every room needs a distinctive silhouette, clearly visible
+ *  exits and one recognisable central object. Placeholder art, real geometry. */
+export function drawRooms(world: Container, house: House): void {
+  const floor = new Graphics();
+  for (const room of house.rooms) {
+    floor.rect(room.bounds.x, room.bounds.y, room.bounds.w, room.bounds.h);
+    floor.fill({ color: 0x2a2434 });
+    floor.rect(room.bounds.x, room.bounds.y, room.bounds.w, room.bounds.h);
+    floor.stroke({ color: 0x4a3f57, width: 3 });
+  }
+  world.addChild(floor);
+
+  const doors = new Graphics();
+  for (const d of house.doors) {
+    doors.rect(d.at.x - d.span / 2, d.at.y - d.span / 2, d.span, d.span);
+    doors.fill({ color: d.kind === 'stair' ? 0x6b5a3e : 0x3d3348 });
+  }
+  world.addChild(doors);
+
+  for (const room of house.rooms) {
+    const label = new Text({
+      text: `${room.name}\n${room.centralObject}`,
+      style: { fill: 0x8a7f9a, fontSize: 16, align: 'center' },
+    });
+    label.x = room.bounds.x + 12;
+    label.y = room.bounds.y + 12;
+    world.addChild(label);
+  }
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the stage, the rooms, and a darkness that never blinds"
+```
+
+---
+
+## Task 10: Actor rendering and identity in darkness
+
+**Files:**
+- Create: `v12/src/render/actors.ts`
+- Test: `v12/test/actors-visibility.test.ts`
+
+**Interfaces:**
+- Consumes: `visibilityAt`, `lightAt` from `core/light`; `SimState`, `Sim`
+- Produces:
+  - `interface ActorAppearance { visibility: Visibility; showName: boolean; saturation: number; alpha: number }`
+  - `appearanceOf(sim: Sim, observerId: ActorId, targetId: ActorId): ActorAppearance`
+  - `drawActors(layer: Graphics, nameLayer: Container, sim: Sim, observerId: ActorId): void`
+
+**The render layer decides nothing.** `appearanceOf` reads `core`'s `visibilityAt`; it does not re-derive a threshold.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/actors-visibility.test.ts`:
+
+```ts
+import { appearanceOf } from '../src/render/actors';
+import { createSim } from '../src/core/sim';
+import { HOLLOW } from '../src/house/hollow';
+
+const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+function twoInRoom(night: number, lit: boolean) {
+  const sim = createSim(HOLLOW, 42, IDS);
+  sim.state.night = night;
+  const b = HOLLOW.rooms.find(r => r.id === 'attic')!.bounds;
+  const spot = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  for (const id of ['bell', 'pike']) {
+    const a = sim.state.actors.find(x => x.id === id)!;
+    a.room = 'attic'; a.at = { ...spot };
+  }
+  sim.state.lanterns[0]!.state = lit
+    ? { kind: 'placed', room: 'attic', at: { ...spot }, watching: 'd_bath_attic', lit: true }
+    : { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: false };
+  sim.state.lanterns[1]!.state = { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: false };
+  return sim;
+}
+
+describe('appearanceOf', () => {
+  // rules §9 — in deep darkness names disappear and colours desaturate
+  it('hides the name and desaturates in an unlit room on night six', () => {
+    const a = appearanceOf(twoInRoom(6, false), 'bell', 'pike');
+    expect(a.visibility).toBe('silhouette');
+    expect(a.showName).toBe(false);
+    expect(a.saturation).toBeLessThan(0.5);
+  });
+
+  it('shows the name inside lantern light', () => {
+    const a = appearanceOf(twoInRoom(6, true), 'bell', 'pike');
+    expect(a.visibility).toBe('identified');
+    expect(a.showName).toBe(true);
+  });
+
+  it('shows the name on night one, before the house darkens', () => {
+    expect(appearanceOf(twoInRoom(1, false), 'bell', 'pike').showName).toBe(true);
+  });
+
+  // rules §9 — footsteps and movement remain perceptible: a silhouette must
+  // still be drawn, never fully transparent
+  it('keeps a silhouette visible rather than erasing it', () => {
+    expect(appearanceOf(twoInRoom(6, false), 'bell', 'pike').alpha).toBeGreaterThan(0);
+  });
+
+  it('reports a target in another room as unseen', () => {
+    const sim = twoInRoom(6, false);
+    sim.state.actors.find(a => a.id === 'pike')!.room = 'cellar';
+    expect(appearanceOf(sim, 'bell', 'pike').visibility).toBe('unseen');
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/actors-visibility.test.ts`
+Expected: FAIL — cannot resolve `../src/render/actors`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/render/actors.ts`:
+
+```ts
+import { Container, Graphics, Text } from 'pixi.js';
+import type { ActorId } from '../core/events';
+import { lightAt, visibilityAt, type Visibility } from '../core/light';
+import { ACTOR_RADIUS, type Sim } from '../core/sim';
+
+export interface ActorAppearance {
+  visibility: Visibility; showName: boolean; saturation: number; alpha: number;
+}
+
+const PYJAMAS: Record<string, number> = {
+  bell: 0xd98a8a, pike: 0x8ab6d9, clem: 0xd9c98a,
+  wren: 0x9ad98a, sparrow: 0xc08ad9, moss: 0x8ad9c4,
+};
+
+/** rules §9: in deep darkness names disappear, pyjama colours desaturate and
+ *  silhouettes partially obscure — but footsteps and movement remain
+ *  perceptible. The threshold lives in core/light so the server can apply the
+ *  same rule authoritatively in slice 2b; this layer only presents it. */
+export function appearanceOf(
+  sim: Sim, observerId: ActorId, targetId: ActorId,
+): ActorAppearance {
+  const observer = sim.state.actors.find(a => a.id === observerId);
+  const target = sim.state.actors.find(a => a.id === targetId);
+  if (!observer || !target || observer.room !== target.room) {
+    return { visibility: 'unseen', showName: false, saturation: 0, alpha: 0 };
+  }
+  const level = lightAt(sim.state.night, target.room, target.at, sim.lightSources());
+  const visibility = visibilityAt(level);
+  return {
+    visibility,
+    showName: visibility === 'identified',
+    saturation: visibility === 'identified' ? 1 : Math.max(level * 1.2, 0.15),
+    alpha: visibility === 'unseen' ? 0 : Math.max(0.45, Math.min(level + 0.45, 1)),
+  };
+}
+
+function desaturate(colour: number, amount: number): number {
+  const r = (colour >> 16) & 0xff, g = (colour >> 8) & 0xff, b = colour & 0xff;
+  const grey = 0.299 * r + 0.587 * g + 0.114 * b;
+  const mix = (c: number) => Math.round(grey + (c - grey) * amount);
+  return (mix(r) << 16) | (mix(g) << 8) | mix(b);
+}
+
+export function drawActors(
+  layer: Graphics, nameLayer: Container, sim: Sim, observerId: ActorId,
+): void {
+  layer.clear();
+  nameLayer.removeChildren();
+  for (const actor of sim.state.actors) {
+    if (!actor.alive) continue;
+    const look = actor.id === observerId
+      ? { visibility: 'identified' as const, showName: true, saturation: 1, alpha: 1 }
+      : appearanceOf(sim, observerId, actor.id);
+    if (look.alpha === 0) continue;
+
+    const base = PYJAMAS[actor.id] ?? 0xcccccc;
+    layer.circle(actor.at.x, actor.at.y, ACTOR_RADIUS);
+    layer.fill({ color: desaturate(base, look.saturation), alpha: look.alpha });
+    layer.circle(actor.at.x, actor.at.y, ACTOR_RADIUS);
+    layer.stroke({ color: 0x3a2b33, width: 2, alpha: look.alpha });
+
+    if (look.showName) {
+      const t = new Text({ text: actor.id, style: { fill: 0xf0e6d8, fontSize: 13 } });
+      t.x = actor.at.x - t.width / 2;
+      t.y = actor.at.y - ACTOR_RADIUS - 18;
+      nameLayer.addChild(t);
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): identity dissolves in the dark, decided in core not render"
+```
+
+---
+
+## Task 11: Audio, input, and the night scene — slice 0 playable
+
+**Files:**
+- Create: `v12/src/audio/sounds.ts`, `v12/src/app/input.ts`, `v12/src/app/scenes/night.ts`, `v12/src/app/main.ts`
+- Test: `v12/test/sounds.test.ts`, `v12/test/input.test.ts`
+
+**Interfaces:**
+- Consumes: everything above
+- Produces:
+  - `soundFor(e: MatchEvent): SoundCue | null` where `type SoundCue = { file: string; volume: number }`
+  - `createInput(target: Window): InputSource` with `read(): Input & { action: 'place' | 'pickup' | 'interact' | null }`
+  - `runNightScene(stage: Stage, seed: number, night: number): void`
+
+- [ ] **Step 1: Write the failing sound-mapping test**
+
+`v12/test/sounds.test.ts`:
+
+```ts
+import { soundFor, SOUND_FILES } from '../src/audio/sounds';
+import type { MatchEvent } from '../src/core/events';
+
+const SAMPLES: MatchEvent[] = [
+  { kind: 'move.enter', tick: 1, night: 1, actor: 'bell', room: 'kitchen', via: 'd_kit_lib' },
+  { kind: 'lantern.place', tick: 2, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'kitchen', watching: 'd_kit_lib' },
+  { kind: 'lantern.snuff', tick: 3, night: 2, actor: 'wren', lantern: 'lantern_a', room: 'kitchen' },
+  { kind: 'take.warn', tick: 4, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+  { kind: 'take.complete', tick: 5, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+  { kind: 'sound', tick: 6, night: 2, floor: 1, sound: 'take', room: 'attic' },
+];
+
+describe('soundFor', () => {
+  // rules §20 — sound carries mechanical information, so every event a player
+  // could hear must map to a distinguishable cue
+  it('maps every slice-0 event kind to a cue', () => {
+    for (const e of SAMPLES) expect(soundFor(e), e.kind).not.toBeNull();
+  });
+
+  it('gives the Take and the Snuff distinguishable cues', () => {
+    const take = soundFor(SAMPLES[4]!)!, snuff = soundFor(SAMPLES[2]!)!;
+    expect(take.file).not.toBe(snuff.file);
+  });
+
+  it('references only declared files', () => {
+    for (const e of SAMPLES) {
+      const cue = soundFor(e);
+      if (cue) expect(SOUND_FILES).toContain(cue.file);
+    }
+  });
+});
+```
+
+- [ ] **Step 2: Write the failing input test**
+
+`v12/test/input.test.ts`:
+
+```ts
+import { inputFromKeys } from '../src/app/input';
+
+describe('inputFromKeys', () => {
+  it('is neutral with nothing held', () => {
+    expect(inputFromKeys(new Set())).toMatchObject({ moveX: 0, moveY: 0, run: false });
+  });
+
+  it('maps WASD and arrows to the same axes', () => {
+    expect(inputFromKeys(new Set(['KeyW'])).moveY).toBe(-1);
+    expect(inputFromKeys(new Set(['ArrowUp'])).moveY).toBe(-1);
+    expect(inputFromKeys(new Set(['KeyD'])).moveX).toBe(1);
+  });
+
+  it('cancels opposing keys instead of drifting', () => {
+    expect(inputFromKeys(new Set(['KeyA', 'KeyD'])).moveX).toBe(0);
+  });
+
+  it('reads shift as run', () => {
+    expect(inputFromKeys(new Set(['ShiftLeft'])).run).toBe(true);
+  });
+
+  it('maps the door and hide keys added in Task 5A', () => {
+    expect(inputFromKeys(new Set(['KeyF'])).action).toBe('door');
+    expect(inputFromKeys(new Set(['KeyC'])).action).toBe('hide');
+  });
+
+  it('resolves two action keys the same way every time', () => {
+    const held = new Set(['KeyF', 'KeyE']);
+    expect(inputFromKeys(held).action).toBe('interact');
+    expect(inputFromKeys(held).action).toBe('interact');
+  });
+});
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `cd v12 && npx vitest run test/sounds.test.ts test/input.test.ts`
+Expected: FAIL — modules unresolved.
+
+- [ ] **Step 4: Implement audio and input**
+
+`v12/src/audio/sounds.ts`:
+
+```ts
+import type { MatchEvent } from '../core/events';
+
+export type SoundCue = { file: string; volume: number };
+
+/** rules §20 — players must learn to distinguish these by ear. Placeholder
+ *  files for slice 0; the sound language itself is slice 4. */
+export const SOUND_FILES = [
+  'step.wav', 'door.wav', 'lantern-set.wav', 'lantern-out.wav',
+  'lantern-lit.wav', 'breath.wav', 'take.wav', 'muffled.wav',
+] as const;
+
+export function soundFor(e: MatchEvent): SoundCue | null {
+  switch (e.kind) {
+    case 'move.enter':      return { file: 'door.wav', volume: 0.5 };
+    case 'door.toggle':     return { file: 'door.wav', volume: 0.4 };
+    case 'lantern.carry':   return { file: 'lantern-set.wav', volume: 0.3 };
+    case 'lantern.place':   return { file: 'lantern-set.wav', volume: 0.6 };
+    case 'lantern.snuff':   return { file: 'lantern-out.wav', volume: 0.8 };
+    case 'lantern.relight': return { file: 'lantern-lit.wav', volume: 0.6 };
+    case 'take.warn':       return { file: 'breath.wav', volume: 0.9 };
+    case 'take.complete':   return { file: 'take.wav', volume: 1.0 };
+    case 'sound':           return { file: 'muffled.wav', volume: 0.7 };
+    default:                return null;
+  }
+}
+
+export function playCue(cue: SoundCue): void {
+  const a = new Audio(`/sfx/${cue.file}`);
+  a.volume = cue.volume;
+  void a.play().catch(() => { /* autoplay policy; ignored until first input */ });
+}
+```
+
+`v12/src/app/input.ts`:
+
+```ts
+import type { Input } from '../core/sim';
+
+export type UiAction = 'place' | 'pickup' | 'interact' | 'door' | 'hide' | null;
+export interface ReadInput extends Input { action: UiAction }
+
+/** Keys are checked in a fixed order so that two held at once resolve the same
+ *  way every frame — determinism reaches all the way out to the keyboard. */
+export function inputFromKeys(held: ReadonlySet<string>): ReadInput {
+  const axis = (neg: string[], pos: string[]) =>
+    (pos.some(k => held.has(k)) ? 1 : 0) - (neg.some(k => held.has(k)) ? 1 : 0);
+  const action: UiAction =
+    held.has('KeyE') ? 'interact' :
+    held.has('KeyQ') ? 'place' :
+    held.has('KeyF') ? 'door' :
+    held.has('KeyC') ? 'hide' : null;
+  return {
+    moveX: axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']),
+    moveY: axis(['KeyW', 'ArrowUp'], ['KeyS', 'ArrowDown']),
+    run: held.has('ShiftLeft') || held.has('ShiftRight'),
+    action,
+  };
+}
+
+export function createInput(target: Window): { read(): ReadInput; dispose(): void } {
+  const held = new Set<string>();
+  const down = (e: KeyboardEvent) => held.add(e.code);
+  const up = (e: KeyboardEvent) => held.delete(e.code);
+  target.addEventListener('keydown', down);
+  target.addEventListener('keyup', up);
+  return {
+    read: () => inputFromKeys(held),
+    dispose: () => { target.removeEventListener('keydown', down); target.removeEventListener('keyup', up); },
+  };
+}
+```
+
+- [ ] **Step 5: Implement the night scene and entry point**
+
+`v12/src/app/scenes/night.ts`:
+
+```ts
+import { Container, Graphics } from 'pixi.js';
+import { playCue, soundFor } from '../../audio/sounds';
+import { exitsOf } from '../../core/house';
+import { applyLanternAction } from '../../core/lantern';
+import { createSim, DT, type Input, type Sim } from '../../core/sim';
+import { HOLLOW } from '../../house/hollow';
+import { drawActors } from '../../render/actors';
+import { drawLighting } from '../../render/lighting';
+import { drawRooms } from '../../render/rooms';
+import type { Stage } from '../../render/stage';
+import { createStalker } from '../../scripted/stalker';
+import { createInput, type UiAction } from '../input';
+
+const PLAYER = 'bell';
+const STALKER = 'wren';
+const IDS = [PLAYER, 'pike', 'clem', STALKER, 'sparrow', 'moss'];
+
+/** The one place the scene translates a keypress into a rule. Every branch
+ *  calls a core action that already validates itself, so an illegal press is
+ *  a no-op rather than a special case here. */
+function dispatch(sim: Sim, room: string, action: UiAction): void {
+  switch (action) {
+    case 'hide':
+      sim.beginHide(PLAYER);
+      break;
+    case 'door': {
+      const door = exitsOf(HOLLOW, room)[0];
+      if (door) sim.toggleDoor(PLAYER, door.id);
+      break;
+    }
+    case 'interact': {
+      const held = sim.state.lanterns.find(
+        l => l.state.kind === 'held' && l.state.by === PLAYER);
+      if (held) break;
+      const here = sim.state.lanterns.find(
+        l => l.state.kind === 'placed' && l.state.room === room);
+      if (here) applyLanternAction(sim, PLAYER, { kind: 'pickup', lantern: here.id });
+      break;
+    }
+    case 'place': {
+      const door = exitsOf(HOLLOW, room)[0];
+      if (door) applyLanternAction(sim, PLAYER, { kind: 'place', watching: door.id });
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function runNightScene(stage: Stage, seed: number, night: number): void {
+  const sim = createSim(HOLLOW, seed, IDS);
+  sim.state.night = night;
+  const stalker = createStalker(HOLLOW, STALKER, seed ^ 0x5eed);
+  const input = createInput(window);
+
+  drawRooms(stage.world, HOLLOW);
+  const lighting = new Graphics();
+  const actors = new Graphics();
+  const names = new Container();
+  stage.world.addChild(lighting, actors, names);
+
+  let accumulator = 0;
+  let lastAction: string | null = null;
+
+  stage.app.ticker.add(ticker => {
+    accumulator += ticker.deltaMS / 1000;
+    while (accumulator >= DT) {
+      accumulator -= DT;
+      const mine = input.read();
+
+      // Edge-triggered: fire once per press, not once per tick.
+      if (mine.action !== lastAction) {
+        const me = sim.state.actors.find(a => a.id === PLAYER);
+        if (me && mine.action) dispatch(sim, me.room, mine.action);
+        lastAction = mine.action;
+      }
+
+      const inputs = new Map<string, Input>();
+      inputs.set(PLAYER, mine);
+      inputs.set(STALKER, stalker.nextInput(sim));
+      sim.step(inputs);
+      stalker.tickBehaviour(sim);
+      for (const e of sim.drain()) {
+        const cue = soundFor(e);
+        if (cue) playCue(cue);
+      }
+    }
+    drawLighting(lighting, HOLLOW, sim.state.night, sim.lightSources());
+    drawActors(actors, names, sim, PLAYER);
+    const me = sim.state.actors.find(a => a.id === PLAYER);
+    if (me) stage.centreOn(me.at);
+  });
+}
+```
+
+`v12/src/app/main.ts`:
+
+```ts
+import { createStage } from '../render/stage';
+import { runNightScene } from './scenes/night';
+
+const params = new URLSearchParams(location.search);
+const seed = Number(params.get('seed') ?? 1234);
+const night = Number(params.get('night') ?? 6);
+
+createStage(document.body).then(stage => runNightScene(stage, seed, night));
+```
+
+- [ ] **Step 6: Run tests and the app**
+
+Run: `cd v12 && npm test` — expected PASS.
+Run: `cd v12 && npm run dev`, open the browser, and walk the house with WASD. Try `?night=1` and `?night=6`.
+
+Controls: **WASD/arrows** move, **Shift** runs, **E** picks up a lantern, **Q** places one, **F** toggles the nearest door, **C** hides.
+
+- [ ] **Step 7: Record the slice 0 acceptance pass**
+
+Create `docs/findings/2026-07-29-slice-0-acceptance.md` and answer each spec §4 criterion in writing, **including the ones that fail**:
+
+1. Navigation survives: traverse all ten rooms and both stairs at `?night=6` without a minimap. Pass/fail.
+2. Identity does not: at `?night=6`, can you tell which child is which at 3 room-widths? It must be **no**, while still seeing that someone is there. Pass/fail.
+3. A placed lantern visibly changes what is knowable about a doorway. Pass/fail.
+4. The Take fires, warns, and can be escaped by reaching lantern light. Pass/fail.
+5. `npm test` green, including determinism.
+
+If criterion 2 fails, the house is too bright — tune `AMBIENT_BY_NIGHT` and `MAX_OVERLAY`, never the criterion.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add v12/ docs/findings/2026-07-29-slice-0-acceptance.md
+git commit -m "feat(v12): slice 0 — a house you can walk in the dark"
+```
+
+---
+
+## Task 12: Pin the match-log schema and the identity-stripping projection
+
+**Slice 1 begins here.**
+
+**Files:**
+- Create: `v12/src/log/schema.ts`, `v12/src/log/project.ts`
+- Modify: `v12/src/log/index.ts` (re-export)
+- Test: `v12/test/project.test.ts`
+
+**Interfaces:**
+- Consumes: `MatchEvent`, `ActorId`, `RoomId` from `core`
+- Produces:
+  - `interface MatchLog { seed: number; house: string; events: MatchEvent[] }`
+  - `interface LanternRecord { room: RoomId; crossings: number; outward: number; hurried: boolean; moved: boolean }`
+  - `interface HouseProjection { night: number; didNotReturn: ActorId[]; flamesLost: number; flamesRemaining: number; lanternRecords: LanternRecord[]; socksSecured: number; roomsDisturbed: RoomId[]; floorSounds: { floor: number; sound: SoundKind }[]; inactivityFloor: number | null; ghostDisturbances: RoomId[]; midnightRoom: RoomId | null }`
+  - `projectForHouse(log: MatchLog, night: number): HouseProjection`
+
+**The projection's type is the enforcement mechanism** for Global Constraint 4. `HouseProjection` carries `ActorId` in exactly one field — `didNotReturn`, which rules §13.1 explicitly grants.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/project.test.ts`:
+
+```ts
+import { projectForHouse, type MatchLog } from '../src/log/project';
+import type { MatchEvent } from '../src/core/events';
+
+function log(events: MatchEvent[]): MatchLog {
+  return { seed: 1, house: 'HOLLOW', events };
+}
+
+describe('projectForHouse', () => {
+  it('reports who did not return — the one identity §13.1 grants', () => {
+    const p = projectForHouse(log([
+      { kind: 'take.complete', tick: 10, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+    ]), 2);
+    expect(p.didNotReturn).toEqual(['pike']);
+  });
+
+  it('never carries the taker', () => {
+    const p = projectForHouse(log([
+      { kind: 'take.complete', tick: 10, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+    ]), 2);
+    expect(JSON.stringify(p)).not.toContain('wren');
+  });
+
+  it('reduces lantern traffic to counts and directions, never names', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 1, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_play' },
+      { kind: 'move.enter', tick: 5, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_play' },
+      { kind: 'move.enter', tick: 8, night: 3, actor: 'moss', room: 'music_room', via: 'd_music_play' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
+    expect(rec.crossings).toBe(2);
+    expect(JSON.stringify(p.lanternRecords)).not.toContain('clem');
+    expect(JSON.stringify(p.lanternRecords)).not.toContain('moss');
+  });
+
+  it('counts flames from the events of that night only', () => {
+    const p = projectForHouse(log([
+      { kind: 'flame.out', tick: 1, night: 2, reason: 'take', remaining: 4 },
+      { kind: 'flame.out', tick: 1, night: 3, reason: 'snuff', remaining: 3 },
+    ]), 3);
+    expect(p.flamesLost).toBe(1);
+    expect(p.flamesRemaining).toBe(3);
+  });
+
+  it('reports floor-level sounds without the room that made them', () => {
+    const p = projectForHouse(log([
+      { kind: 'sound', tick: 4, night: 2, floor: 1, sound: 'take', room: 'attic' },
+    ]), 2);
+    expect(p.floorSounds).toEqual([{ floor: 1, sound: 'take' }]);
+    expect(JSON.stringify(p.floorSounds)).not.toContain('attic');
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/project.test.ts`
+Expected: FAIL — cannot resolve `../src/log/project`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/log/schema.ts`:
+
+```ts
+import type { ActorId, MatchEvent, SockId } from '../core/events';
+import type { RoomId } from '../core/house';
+
+export interface MatchLog { seed: number; house: string; events: MatchEvent[] }
+
+/** rules §13.2 — one claim marker per living player per morning, permanent
+ *  and public for the rest of the match. */
+export type Claim =
+  | { kind: 'player-room';   night: number; by: ActorId; subject: ActorId; room: RoomId }
+  | { kind: 'player-player'; night: number; by: ActorId; subject: ActorId; object: ActorId }
+  | { kind: 'player-sock';   night: number; by: ActorId; subject: ActorId; sock: SockId }
+  | { kind: 'room-incident'; night: number; by: ActorId; room: RoomId; incident: string };
+```
+
+`v12/src/log/project.ts`:
+
+```ts
+import type { ActorId, SoundKind } from '../core/events';
+import type { RoomId } from '../core/house';
+import type { MatchLog } from './schema';
+
+export type { MatchLog };
+
+export interface LanternRecord {
+  room: RoomId; crossings: number; outward: number; hurried: boolean; moved: boolean;
+}
+
+/** GLOBAL CONSTRAINT: this type is the enforcement mechanism for rules §13.1's
+ *  voice rule. It carries ActorId in exactly ONE field — didNotReturn — which
+ *  §13.1 explicitly grants. renderReport() takes only this, so it cannot leak
+ *  a name it was never given. Do not add an identity-bearing field here
+ *  without re-reading §13.1 and spec §3.3. */
+export interface HouseProjection {
+  night: number;
+  didNotReturn: ActorId[];
+  flamesLost: number;
+  flamesRemaining: number;
+  lanternRecords: LanternRecord[];
+  socksSecured: number;
+  roomsDisturbed: RoomId[];
+  floorSounds: { floor: number; sound: SoundKind }[];
+  inactivityFloor: number | null;
+  ghostDisturbances: RoomId[];
+  midnightRoom: RoomId | null;
+}
+
+export function projectForHouse(log: MatchLog, night: number): HouseProjection {
+  const nightly = log.events.filter(e => e.night === night);
+
+  const didNotReturn: ActorId[] = [];
+  const roomsDisturbed = new Set<RoomId>();
+  const floorSounds: { floor: number; sound: SoundKind }[] = [];
+  const watched = new Map<RoomId, { doors: Set<string>; moved: boolean }>();
+  const crossings = new Map<RoomId, number>();
+  let flamesLost = 0;
+  let flamesRemaining = 5;
+  let socksSecured = 0;
+
+  for (const e of nightly) {
+    switch (e.kind) {
+      case 'take.complete':
+        didNotReturn.push(e.victim);
+        roomsDisturbed.add(e.room);
+        break;
+      case 'flame.out':
+        flamesLost++;
+        flamesRemaining = e.remaining;
+        break;
+      case 'sound':
+        floorSounds.push({ floor: e.floor, sound: e.sound });
+        break;
+      case 'sock.secure':
+        socksSecured++;
+        break;
+      case 'lantern.place': {
+        const rec = watched.get(e.room) ?? { doors: new Set<string>(), moved: false };
+        if (e.watching) rec.doors.add(e.watching);
+        watched.set(e.room, rec);
+        break;
+      }
+      case 'lantern.carry': {
+        const rec = watched.get(e.room);
+        if (rec) rec.moved = true;
+        break;
+      }
+      case 'lantern.snuff':
+        roomsDisturbed.add(e.room);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // rules §10.3 — a lantern reports how many figures crossed its watched
+  // doorway. It never reports names, so only the count survives projection.
+  for (const e of nightly) {
+    if (e.kind !== 'move.enter') continue;
+    for (const [room, rec] of watched) {
+      if (rec.doors.has(e.via)) crossings.set(room, (crossings.get(room) ?? 0) + 1);
+    }
+  }
+
+  const lanternRecords: LanternRecord[] = [...watched].map(([room, rec]) => ({
+    room,
+    crossings: crossings.get(room) ?? 0,
+    outward: 0,
+    hurried: false,
+    moved: rec.moved,
+  }));
+
+  return {
+    night,
+    didNotReturn,
+    flamesLost,
+    flamesRemaining,
+    lanternRecords,
+    socksSecured,
+    roomsDisturbed: [...roomsDisturbed],
+    floorSounds,
+    inactivityFloor: null,
+    ghostDisturbances: [],
+    midnightRoom: night === 4 ? 'library' : null,
+  };
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): pin the log, and make §13.1's voice rule a type"
+```
+
+---
+
+## Task 13: The house report, and the voice rule under test
+
+**Files:**
+- Create: `v12/src/log/report.ts`
+- Test: `v12/test/report.test.ts`
+
+**Interfaces:**
+- Consumes: `HouseProjection`, `projectForHouse`, `House`
+- Produces: `renderReport(p: HouseProjection, house: House): string[]`
+
+- [ ] **Step 1: Write the failing test**
+
+The second test here is the point of the whole task. `v12/test/report.test.ts`:
+
+```ts
+import { renderReport } from '../src/log/report';
+import { projectForHouse } from '../src/log/project';
+import type { MatchLog } from '../src/log/schema';
+import type { MatchEvent } from '../src/core/events';
+import { HOLLOW } from '../src/house/hollow';
+
+const log = (events: MatchEvent[]): MatchLog => ({ seed: 1, house: 'HOLLOW', events });
+
+describe('renderReport', () => {
+  // rules §13.1 — the house reports facts and never interprets, in this order
+  it('reads out in §13.1 order', () => {
+    const lines = renderReport(projectForHouse(log([
+      { kind: 'take.complete', tick: 1, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+      { kind: 'flame.out', tick: 2, night: 2, reason: 'take', remaining: 4 },
+      { kind: 'sound', tick: 3, night: 2, floor: 1, sound: 'take', room: 'attic' },
+    ]), 2), HOLLOW);
+    const text = lines.join('\n');
+    expect(text.indexOf('did not return')).toBeLessThan(text.indexOf('flame'));
+    expect(text.indexOf('flame')).toBeLessThan(text.indexOf('sound'));
+  });
+
+  // rules §13.1 VOICE RULE — the house's phrasing depends only on the room and
+  // the night, never on who was standing in it. This is the test that makes
+  // that rule real.
+  it('produces identical text when only the identities differ', () => {
+    const shape = (a: string, b: string, c: string): MatchEvent[] => ([
+      { kind: 'lantern.place', tick: 1, night: 3, actor: a, lantern: 'lantern_a', room: 'music_room', watching: 'd_music_play' },
+      { kind: 'move.enter', tick: 5, night: 3, actor: b, room: 'playroom', via: 'd_music_play' },
+      { kind: 'move.enter', tick: 9, night: 3, actor: c, room: 'music_room', via: 'd_music_play' },
+      { kind: 'sound', tick: 12, night: 3, floor: 1, sound: 'snuff', room: 'music_room' },
+    ]);
+    const one = renderReport(projectForHouse(log(shape('bell', 'pike', 'clem')), 3), HOLLOW);
+    const two = renderReport(projectForHouse(log(shape('moss', 'wren', 'sparrow')), 3), HOLLOW);
+    expect(one).toEqual(two);
+  });
+
+  it('names a child who did not return, because §13.1 grants exactly that', () => {
+    const lines = renderReport(projectForHouse(log([
+      { kind: 'take.complete', tick: 1, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+    ]), 2), HOLLOW);
+    expect(lines.join('\n')).toContain('pike');
+  });
+
+  it('never names the taker', () => {
+    const lines = renderReport(projectForHouse(log([
+      { kind: 'take.complete', tick: 1, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+    ]), 2), HOLLOW);
+    expect(lines.join('\n')).not.toContain('wren');
+  });
+
+  it('says the house saw nothing rather than nothing at all', () => {
+    const lines = renderReport(projectForHouse(log([]), 1), HOLLOW);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.join('\n')).toMatch(/saw nothing|stayed dark/i);
+  });
+
+  it('announces the Midnight room on night four — rules §18', () => {
+    const lines = renderReport(projectForHouse(log([]), 4), HOLLOW);
+    expect(lines.join('\n')).toMatch(/Library/i);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/report.test.ts`
+Expected: FAIL — cannot resolve `../src/log/report`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/log/report.ts`:
+
+```ts
+import { roomById, type House } from '../core/house';
+import type { HouseProjection } from './project';
+
+const FLOOR_WORD = ['downstairs', 'upstairs'] as const;
+
+/** rules §13.1 — the house reports facts and never interprets, in this order:
+ *  who did not return, flames, lantern records, socks secured, rooms
+ *  disturbed, floor sounds, inactivity traces, ghost disturbances, Midnight.
+ *
+ *  It takes a HouseProjection and nothing else. That type carries no identity
+ *  but didNotReturn, so the voice rule holds by construction. */
+export function renderReport(p: HouseProjection, house: House): string[] {
+  const lines: string[] = [];
+  const name = (id: string) => roomById(house, id).name;
+
+  for (const child of p.didNotReturn) {
+    lines.push(`${child} did not return.`);
+  }
+
+  if (p.flamesLost > 0) {
+    lines.push(p.flamesLost === 1
+      ? `One flame went out. ${p.flamesRemaining} remain.`
+      : `${p.flamesLost} flames went out. ${p.flamesRemaining} remain.`);
+  }
+
+  for (const rec of p.lanternRecords) {
+    const head = `The ${name(rec.room)} lantern`;
+    if (rec.crossings === 0) {
+      lines.push(`${head} watched an empty doorway.`);
+    } else {
+      lines.push(`${head} watched ${rec.crossings === 1 ? 'one figure' : `${rec.crossings} figures`} cross.`);
+    }
+    if (rec.moved) lines.push(`${head} was moved.`);
+  }
+
+  if (p.socksSecured > 0) {
+    lines.push(p.socksSecured === 1
+      ? 'One sock was secured.'
+      : `${p.socksSecured} socks were secured.`);
+  }
+
+  for (const room of p.roomsDisturbed) {
+    lines.push(`Something was disturbed in the ${name(room)}.`);
+  }
+
+  for (const s of p.floorSounds) {
+    lines.push(`A sound came from ${FLOOR_WORD[s.floor] ?? 'somewhere'}.`);
+  }
+
+  if (p.inactivityFloor !== null) {
+    lines.push(`The house felt someone still, ${FLOOR_WORD[p.inactivityFloor] ?? 'somewhere'}.`);
+  }
+
+  for (const room of p.ghostDisturbances) {
+    lines.push(`A draft moved through the ${name(room)}.`);
+  }
+
+  if (p.midnightRoom) {
+    lines.push(`At Midnight, the ${name(p.midnightRoom)} will show what stands in it.`);
+  }
+
+  if (lines.length === 0) lines.push('The house stayed dark. The house saw nothing.');
+  return lines;
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS. If the voice-rule test fails, an identity has leaked into the projection — fix the projection, never the test.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the house report, and a test that makes the voice rule real"
+```
+
+---
+
+## Task 14: The hand-authored six-night fixture
+
+**Files:**
+- Create: `v12/src/log/fixture.ts`
+- Test: `v12/test/fixture.test.ts`
+
+**Interfaces:**
+- Consumes: `MatchLog`, `Claim`, `projectForHouse`, `renderReport`
+- Produces: `SIX_NIGHT_MATCH: MatchLog`, `SIX_NIGHT_CLAIMS: Claim[]`
+
+Spec §5 requires the fixture to contain **a Displace, a failed Call, and a claim-board contradiction**.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/fixture.test.ts`:
+
+```ts
+import { SIX_NIGHT_MATCH, SIX_NIGHT_CLAIMS } from '../src/log/fixture';
+import { projectForHouse } from '../src/log/project';
+import { renderReport } from '../src/log/report';
+import { HOLLOW } from '../src/house/hollow';
+
+describe('SIX_NIGHT_MATCH', () => {
+  it('covers six nights', () => {
+    expect(new Set(SIX_NIGHT_MATCH.events.map(e => e.night))).toEqual(new Set([1, 2, 3, 4, 5, 6]));
+  });
+
+  it('renders a non-empty report for every night', () => {
+    for (let n = 1; n <= 6; n++) {
+      expect(renderReport(projectForHouse(SIX_NIGHT_MATCH, n), HOLLOW).length,
+             `night ${n}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('references only rooms and doors the house actually has', () => {
+    const rooms = new Set(HOLLOW.rooms.map(r => r.id));
+    const doors = new Set(HOLLOW.doors.map(d => d.id));
+    for (const e of SIX_NIGHT_MATCH.events) {
+      if ('room' in e && e.room) expect(rooms, JSON.stringify(e)).toContain(e.room);
+      if ('via' in e && e.via) expect(doors, JSON.stringify(e)).toContain(e.via);
+    }
+  });
+
+  // spec §5 — the fixture must contain a Displace
+  it('contains a sock picked up in one room and dropped in another', () => {
+    const pickups = SIX_NIGHT_MATCH.events.filter(e => e.kind === 'sock.pickup');
+    const drops = SIX_NIGHT_MATCH.events.filter(e => e.kind === 'sock.drop');
+    const displaced = pickups.some(p =>
+      drops.some(d => 'sock' in d && 'sock' in p && d.sock === p.sock && d.room !== p.room));
+    expect(displaced).toBe(true);
+  });
+
+  // rules §8 — no Take is possible on Night One
+  it('has no Take on night one', () => {
+    expect(SIX_NIGHT_MATCH.events.some(e => e.kind === 'take.complete' && e.night === 1)).toBe(false);
+  });
+
+  // rules §15.4 — a failed Call puts out a flame
+  it('contains a failed Call that cost a flame', () => {
+    expect(SIX_NIGHT_MATCH.events.some(e => e.kind === 'flame.out' && e.reason === 'failed-call')).toBe(true);
+  });
+});
+
+describe('SIX_NIGHT_CLAIMS', () => {
+  // rules §13.2 — one claim marker per living player per morning
+  it('gives no player two claims in one morning', () => {
+    const seen = new Set<string>();
+    for (const c of SIX_NIGHT_CLAIMS) {
+      const key = `${c.night}:${c.by}`;
+      expect(seen.has(key), key).toBe(false);
+      seen.add(key);
+    }
+  });
+
+  // spec §5 — the fixture must contain a contradiction to find
+  it('contains one author placing the same subject in two rooms on one night', () => {
+    const roomClaims = SIX_NIGHT_CLAIMS.filter(c => c.kind === 'player-room');
+    const contradiction = roomClaims.some(a => roomClaims.some(b =>
+      a !== b && a.by === b.by && a.kind === 'player-room' && b.kind === 'player-room'
+      && a.subject === b.subject && a.room !== b.room));
+    expect(contradiction).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/fixture.test.ts`
+Expected: FAIL — cannot resolve `../src/log/fixture`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/log/fixture.ts`:
+
+```ts
+import type { MatchEvent } from '../core/events';
+import type { Claim, MatchLog } from './schema';
+
+/** A hand-authored six-night match. Nobody has played v12, so this is
+ *  invented rather than recorded — it exists to exercise the report and the
+ *  claim board (spec §5), not to assert anything about balance. It must never
+ *  be treated as data. */
+const events: MatchEvent[] = [
+  // Night 1 — rules §8: no Take is possible. Lanterns get placed, that is all.
+  { kind: 'move.enter', tick: 30, night: 1, actor: 'bell', room: 'hearth', via: 'd_bed_hearth' },
+  { kind: 'lantern.place', tick: 60, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'hearth', watching: 'd_hearth_kit' },
+  { kind: 'move.enter', tick: 75, night: 1, actor: 'clem', room: 'kitchen', via: 'd_hearth_kit' },
+
+  // Night 2 — the first Take, in the attic. A sound on the upper floor.
+  { kind: 'move.enter', tick: 120, night: 2, actor: 'pike', room: 'attic', via: 'd_bath_attic' },
+  { kind: 'take.complete', tick: 200, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
+  { kind: 'sock.spawn', tick: 201, night: 2, sock: 'sock_1', room: 'attic', source: 'take' },
+  { kind: 'flame.out', tick: 202, night: 2, reason: 'take', remaining: 4 },
+  { kind: 'sound', tick: 203, night: 2, floor: 1, sound: 'take', room: 'attic' },
+
+  // Night 3 — the Displace. sock_1 is lifted from the attic and left in the
+  // cellar, so the evidence now points downstairs. rules §12.3.
+  { kind: 'sock.pickup', tick: 260, night: 3, actor: 'wren', sock: 'sock_1', room: 'attic' },
+  { kind: 'move.enter', tick: 300, night: 3, actor: 'wren', room: 'cellar', via: 's_cellar_attic' },
+  { kind: 'sock.drop', tick: 320, night: 3, actor: 'wren', sock: 'sock_1', room: 'cellar' },
+  { kind: 'lantern.place', tick: 340, night: 3, actor: 'moss', lantern: 'lantern_b', room: 'music_room', watching: 'd_music_play' },
+  { kind: 'move.enter', tick: 350, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_play' },
+  { kind: 'move.enter', tick: 380, night: 3, actor: 'sparrow', room: 'music_room', via: 'd_music_play' },
+
+  // Night 4 — Midnight. A sock is secured, unlocking nothing yet.
+  { kind: 'sock.pickup', tick: 420, night: 4, actor: 'sparrow', sock: 'sock_1', room: 'cellar' },
+  { kind: 'move.enter', tick: 450, night: 4, actor: 'sparrow', room: 'library', via: 'd_lib_cellar' },
+  { kind: 'sock.secure', tick: 500, night: 4, actor: 'sparrow', sock: 'sock_1', room: 'shared_bedroom' },
+
+  // Night 5 — a Snuff, which costs a flame and yields the second sock.
+  { kind: 'lantern.snuff', tick: 540, night: 5, actor: 'wren', lantern: 'lantern_b', room: 'music_room' },
+  { kind: 'sock.spawn', tick: 541, night: 5, sock: 'sock_2', room: 'music_room', source: 'snuff' },
+  { kind: 'flame.out', tick: 542, night: 5, reason: 'snuff', remaining: 3 },
+  { kind: 'sound', tick: 543, night: 5, floor: 1, sound: 'snuff', room: 'music_room' },
+  { kind: 'sock.secure', tick: 580, night: 5, actor: 'moss', sock: 'sock_2', room: 'shared_bedroom' },
+
+  // Night 6 — two socks bought a Call. It named the wrong child, and rules
+  // §15.4 took a flame for it.
+  { kind: 'flame.out', tick: 620, night: 6, reason: 'failed-call', remaining: 2 },
+  { kind: 'sound', tick: 640, night: 6, floor: 0, sound: 'shed', room: 'cellar' },
+  { kind: 'sock.spawn', tick: 641, night: 6, sock: 'sock_3', room: 'cellar', source: 'shed' },
+];
+
+export const SIX_NIGHT_MATCH: MatchLog = { seed: 4242, house: 'HOLLOW', events };
+
+/** One claim per living player per morning (rules §13.2). bell contradicts
+ *  themselves about wren between night 3 and night 5 — that contradiction is
+ *  the thing slice 1 exists to make visible. */
+export const SIX_NIGHT_CLAIMS: Claim[] = [
+  { kind: 'player-room',   night: 2, by: 'bell',    subject: 'wren',  room: 'hearth' },
+  { kind: 'player-room',   night: 2, by: 'clem',    subject: 'moss',  room: 'kitchen' },
+  { kind: 'room-incident', night: 3, by: 'sparrow', room: 'attic',    incident: 'a sound upstairs' },
+  { kind: 'player-room',   night: 3, by: 'bell',    subject: 'wren',  room: 'attic' },
+  { kind: 'player-player', night: 4, by: 'moss',    subject: 'wren',  object: 'sparrow' },
+  { kind: 'player-sock',   night: 4, by: 'sparrow', subject: 'wren',  sock: 'sock_1' },
+  { kind: 'player-room',   night: 5, by: 'bell',    subject: 'wren',  room: 'cellar' },
+  { kind: 'room-incident', night: 5, by: 'clem',    room: 'music_room', incident: 'the lantern went out' },
+  { kind: 'player-player', night: 6, by: 'sparrow', subject: 'wren',  object: 'bell' },
+];
+```
+
+Note: `bell`'s night-3 and night-5 claims both place `wren`, in different rooms, on different nights — which is not itself a contradiction. The contradiction the test looks for is **the same subject in two rooms by the same author**; night 3 says the attic and night 5 says the cellar. Task 15 decides which of those pairings the board actually flags.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): a hand-authored six-night match to render against"
+```
+
+---
+
+## Task 15: The claim board
+
+**Files:**
+- Create: `v12/src/log/board.ts`
+- Test: `v12/test/board.test.ts`
+
+**Interfaces:**
+- Consumes: `Claim` from `log/schema`
+- Produces:
+  - `interface Board { claims: Claim[] }`, `emptyBoard(): Board`
+  - `placeClaim(board: Board, claim: Claim): { ok: boolean; reason?: string }`
+  - `interface Contradiction { a: Claim; b: Claim; because: string }`
+  - `findContradictions(board: Board): Contradiction[]`
+
+**Rule decided here (rules §13.2 leaves it open):** a contradiction is one author placing the **same subject** in **two different rooms**, regardless of night — because a claim is an assertion about where someone was, and the board's job is to show the author disagreeing with themselves. Same-night is the sharper case and is reported first.
+
+- [ ] **Step 1: Write the failing test**
+
+`v12/test/board.test.ts`:
+
+```ts
+import { emptyBoard, placeClaim, findContradictions } from '../src/log/board';
+import { SIX_NIGHT_CLAIMS } from '../src/log/fixture';
+import type { Claim } from '../src/log/schema';
+
+function roomClaim(night: number, by: string, subject: string, room: string): Claim {
+  return { kind: 'player-room', night, by, subject, room };
+}
+
+describe('placeClaim', () => {
+  // rules §13.2 — each living player may place ONE claim marker per morning
+  it('accepts one claim per player per morning', () => {
+    const b = emptyBoard();
+    expect(placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic')).ok).toBe(true);
+    expect(placeClaim(b, roomClaim(2, 'clem', 'wren', 'attic')).ok).toBe(true);
+  });
+
+  it('refuses a second claim from the same player on the same morning', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    const r = placeClaim(b, roomClaim(2, 'bell', 'wren', 'cellar'));
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/already/i);
+  });
+
+  it('allows the same player again on a later morning', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    expect(placeClaim(b, roomClaim(3, 'bell', 'wren', 'attic')).ok).toBe(true);
+  });
+
+  // rules §13.2 — claims are permanent and public for the rest of the match
+  it('never removes a claim once placed, and freezes what it stored', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    placeClaim(b, roomClaim(3, 'bell', 'wren', 'cellar'));
+    expect(b.claims).toHaveLength(2);
+    expect(Object.isFrozen(b.claims[0])).toBe(true);
+  });
+});
+
+describe('findContradictions', () => {
+  it('finds one author placing the same subject in two rooms', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    placeClaim(b, roomClaim(4, 'bell', 'wren', 'cellar'));
+    const found = findContradictions(b);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.because).toMatch(/two rooms/i);
+  });
+
+  it('does not flag two different authors disagreeing', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    placeClaim(b, roomClaim(2, 'clem', 'wren', 'cellar'));
+    expect(findContradictions(b)).toEqual([]);
+  });
+
+  it('does not flag an author claiming two different subjects', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    placeClaim(b, roomClaim(3, 'bell', 'moss', 'cellar'));
+    expect(findContradictions(b)).toEqual([]);
+  });
+
+  // spec §5 — a contradiction planted in the fixture must be findable
+  it('finds the contradiction planted in the six-night fixture', () => {
+    const b = emptyBoard();
+    for (const c of SIX_NIGHT_CLAIMS) placeClaim(b, c);
+    expect(findContradictions(b).length).toBeGreaterThan(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/board.test.ts`
+Expected: FAIL — cannot resolve `../src/log/board`.
+
+- [ ] **Step 3: Implement**
+
+`v12/src/log/board.ts`:
+
+```ts
+import type { Claim } from './schema';
+
+export interface Board { claims: Claim[] }
+
+export function emptyBoard(): Board { return { claims: [] }; }
+
+export interface PlaceResult { ok: boolean; reason?: string }
+
+/** rules §13.2 — one claim marker per living player per morning, and claims
+ *  are permanent and public for the rest of the match. Permanence is why the
+ *  stored claim is frozen: speech is deniable, a placed claim is committed. */
+export function placeClaim(board: Board, claim: Claim): PlaceResult {
+  const already = board.claims.some(c => c.night === claim.night && c.by === claim.by);
+  if (already) return { ok: false, reason: `${claim.by} has already claimed on night ${claim.night}` };
+  board.claims.push(Object.freeze({ ...claim }) as Claim);
+  return { ok: true };
+}
+
+export interface Contradiction { a: Claim; b: Claim; because: string }
+
+/** rules §13.2 leaves "contradiction" undefined; this is the reading the
+ *  prototype takes. An author placing the same subject in two different rooms
+ *  disagrees with themselves — that is the whole point of a permanent board.
+ *  Same-night pairs are the sharper case and sort first. */
+export function findContradictions(board: Board): Contradiction[] {
+  const out: Contradiction[] = [];
+  const roomClaims = board.claims.filter(
+    (c): c is Extract<Claim, { kind: 'player-room' }> => c.kind === 'player-room');
+
+  for (let i = 0; i < roomClaims.length; i++) {
+    for (let j = i + 1; j < roomClaims.length; j++) {
+      const a = roomClaims[i]!, b = roomClaims[j]!;
+      if (a.by !== b.by) continue;
+      if (a.subject !== b.subject) continue;
+      if (a.room === b.room) continue;
+      out.push({
+        a, b,
+        because: a.night === b.night
+          ? `${a.by} put ${a.subject} in two rooms on the same night`
+          : `${a.by} put ${a.subject} in two rooms — night ${a.night} and night ${b.night}`,
+      });
+    }
+  }
+  return out.sort((x, y) =>
+    Number(y.a.night === y.b.night) - Number(x.a.night === x.b.night));
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): the claim board, permanent and self-contradicting"
+```
+
+---
+
+## Task 16: The morning scene — slice 1 playable, and the acceptance pass
+
+**Files:**
+- Create: `v12/src/app/scenes/morning.ts`
+- Modify: `v12/src/app/main.ts` (route `?scene=morning`)
+- Create: `docs/findings/2026-07-29-slice-1-acceptance.md`
+- Test: manual, recorded in the findings document
+
+**Interfaces:**
+- Consumes: `SIX_NIGHT_MATCH`, `SIX_NIGHT_CLAIMS`, `projectForHouse`, `renderReport`, `emptyBoard`, `placeClaim`, `findContradictions`
+
+- [ ] **Step 1: Implement the morning scene**
+
+`v12/src/app/scenes/morning.ts`:
+
+```ts
+import { HOLLOW } from '../../house/hollow';
+import { emptyBoard, findContradictions, placeClaim } from '../../log/board';
+import { SIX_NIGHT_CLAIMS, SIX_NIGHT_MATCH } from '../../log/fixture';
+import { projectForHouse } from '../../log/project';
+import { renderReport } from '../../log/report';
+import type { Claim } from '../../log/schema';
+
+const PLAYER = 'bell';
+const SUBJECTS = ['pike', 'clem', 'wren', 'sparrow', 'moss'];
+
+export function runMorningScene(root: HTMLElement, night: number): void {
+  const board = emptyBoard();
+  for (const c of SIX_NIGHT_CLAIMS.filter(c => c.night < night)) placeClaim(board, c);
+
+  const style = document.createElement('style');
+  style.textContent = `
+    .morning { font: 16px/1.6 Georgia, serif; color: #e8dcc8; padding: 32px;
+               max-width: 900px; margin: 0 auto; }
+    .morning h2 { font-weight: normal; letter-spacing: .08em; color: #b9a88f; }
+    .report { border-left: 3px solid #6b5a3e; padding-left: 16px; margin: 24px 0; }
+    .claim-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    .claim-row button { font: inherit; background: #2a2434; color: #e8dcc8;
+                        border: 1px solid #4a3f57; padding: 6px 12px; cursor: pointer; }
+    .claim-row button[aria-pressed="true"] { background: #6b5a3e; }
+    .placed { margin: 4px 0; color: #cbbfa8; }
+    .contradiction { color: #e0a0a0; border-left: 3px solid #e0a0a0; padding-left: 12px; }
+    .timer { color: #b9a88f; font-variant-numeric: tabular-nums; }
+  `;
+  document.head.appendChild(style);
+
+  root.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'morning';
+  root.appendChild(wrap);
+
+  let subject: string | null = null;
+  let room: string | null = null;
+  const started = performance.now();
+
+  function render(): void {
+    const report = renderReport(projectForHouse(SIX_NIGHT_MATCH, night), HOLLOW);
+    const contradictions = findContradictions(board);
+    wrap.innerHTML = `
+      <h2>Night ${night}</h2>
+      <div class="report">${report.map(l => `<div>${l}</div>`).join('')}</div>
+      <h2>The claim board</h2>
+      <div class="claim-row" id="subjects">${SUBJECTS.map(s =>
+        `<button data-subject="${s}" aria-pressed="${subject === s}">${s}</button>`).join('')}</div>
+      <div class="claim-row" id="rooms">${HOLLOW.rooms.map(r =>
+        `<button data-room="${r.id}" aria-pressed="${room === r.id}">${r.name}</button>`).join('')}</div>
+      <div class="claim-row"><button id="commit">Commit claim</button>
+        <span class="timer" id="timer"></span></div>
+      ${board.claims.map(c => `<div class="placed">n${c.night} · ${c.by} → ${
+        'subject' in c ? c.subject : ''} ${'room' in c ? `in ${c.room}` : ''}</div>`).join('')}
+      ${contradictions.map(c => `<div class="contradiction">${c.because}</div>`).join('')}
+    `;
+
+    wrap.querySelectorAll<HTMLButtonElement>('[data-subject]').forEach(b =>
+      b.onclick = () => { subject = b.dataset.subject!; render(); });
+    wrap.querySelectorAll<HTMLButtonElement>('[data-room]').forEach(b =>
+      b.onclick = () => { room = b.dataset.room!; render(); });
+    wrap.querySelector<HTMLButtonElement>('#commit')!.onclick = () => {
+      if (!subject || !room) return;
+      const claim: Claim = { kind: 'player-room', night, by: PLAYER, subject, room };
+      const r = placeClaim(board, claim);
+      const secs = ((performance.now() - started) / 1000).toFixed(1);
+      // The number slice 1 is actually for: how long one claim took to place.
+      console.log(`[claim] ${r.ok ? 'placed' : `refused: ${r.reason}`} after ${secs}s`);
+      subject = null; room = null;
+      render();
+    };
+    const t = wrap.querySelector<HTMLElement>('#timer')!;
+    t.textContent = `${((performance.now() - started) / 1000).toFixed(1)}s of 60`;
+  }
+
+  render();
+  setInterval(() => {
+    const t = wrap.querySelector<HTMLElement>('#timer');
+    if (t) t.textContent = `${((performance.now() - started) / 1000).toFixed(1)}s of 60`;
+  }, 100);
+}
+```
+
+- [ ] **Step 2: Route to it from main**
+
+Replace `v12/src/app/main.ts`:
+
+```ts
+import { createStage } from '../render/stage';
+import { runMorningScene } from './scenes/morning';
+import { runNightScene } from './scenes/night';
+
+const params = new URLSearchParams(location.search);
+const seed = Number(params.get('seed') ?? 1234);
+const night = Number(params.get('night') ?? 6);
+
+if (params.get('scene') === 'morning') {
+  runMorningScene(document.body, night);
+} else {
+  createStage(document.body).then(stage => runNightScene(stage, seed, night));
+}
+```
+
+- [ ] **Step 3: Run the full suite**
+
+Run: `cd v12 && npm test`
+Expected: PASS, everything green, `tsc --noEmit` clean.
+
+- [ ] **Step 4: Run the slice 1 acceptance pass**
+
+Open `?scene=morning&night=5`. Create `docs/findings/2026-07-29-slice-1-acceptance.md` and answer each spec §5 criterion in writing, including failures:
+
+1. Six nights render six reports, and no code reads actor identity outside `didNotReturn`. (The voice-rule test proves the second half.)
+2. The contradiction planted on night 3 against night 5 is findable **by someone who did not plant it**. Ask this of yourself honestly, or better, of anyone at all.
+3. **Timed:** how many seconds from morning start to a committed claim? Read it from the console line. Record the number.
+
+State the limit plainly in the document: you are the fastest possible user of a board you built, so this can show 60 seconds is **definitely too slow** — it cannot show it is fast enough.
+
+- [ ] **Step 5: Review the report for inferential leakage**
+
+Spec §5 requires this and it is not a test. Read the six rendered reports and ask: does any line identify a person to someone who was in the adjacent room? Rules §10.3's direction, count and timing frequently will. Record what you find under a heading `## Inferential leakage` — this is a design finding, not a bug, and the answer feeds rules §3.3.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add v12/ docs/findings/2026-07-29-slice-1-acceptance.md
+git commit -m "feat(v12): slice 1 — the morning, and the first timed claim"
+```
+
+---
+
+## Task 17: Read the gate
+
+**Files:**
+- Modify: `docs/findings/2026-07-29-tester-track.md`
+
+Both slices are done. Spec §6 is now live.
+
+- [ ] **Step 1: Record the gate status honestly**
+
+Under `## Gate status`, write which of the two tiers is met:
+
+- **Gate A** — 2–3 humans confirmed for a scheduled session, twice → slice 2a, the Bind toy.
+- **Gate B** — 6 humans, twice → slice 2b and everything after.
+- **Neither** → **park v12.** Record the findings and stop. Do not build authoritative netcode on an unvalidated premise.
+
+Parking is an acceptable outcome and the spec says so. Slice 0 is a playable house and a recruiting artefact; slice 1 is a log format and two renderers the real game needs regardless. Neither is discarded.
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add docs/findings/2026-07-29-tester-track.md
+git commit -m "docs: read the gate"
+```
+
+- [ ] **Step 3: Stop**
+
+**This plan ends here.** Anything past the gate is planned separately, once there is a reason to believe the premise. Do not extend this document.
+
+---
+
+## Deliberately out of scope
+
+Restating spec §9, because these are the things a well-meaning implementer will add:
+
+- **No policy bot.** Task 8's stalker is scripted and produces no number. If it grows a heuristic, a score, or a counter, that is a defect.
+- **No economy simulator** for rules §32 Q2/Q3/Q4. A movement model exists now, but it has never been calibrated against a human, so anything built on top of it would measure the model rather than the game.
+- **No networking.** No Colyseus, no WebSocket, no room codes. Slice 2b, behind Gate B.
+- **No Displace, Shed, Slip, Call, ghosts, Whisper, Last Night, or Bind** as playable systems. The fixture *describes* a Displace so the report has something to render; that is not an implementation.
+- **Not rules §12.4's Shed logic.** Spec §8.0 records it as a defect with no correct resolution. Do not implement it and do not pick one of the two failing answers.
