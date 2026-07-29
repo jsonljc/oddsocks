@@ -625,7 +625,11 @@ export type MatchEvent =
   | (Base & { kind: 'sock.pickup' | 'sock.drop' | 'sock.secure';
               actor: ActorId; sock: SockId; room: RoomId })
   | (Base & { kind: 'flame.out'; reason: FlameReason; remaining: number })
-  | (Base & { kind: 'sound'; floor: number; sound: SoundKind; room: RoomId });
+  | (Base & { kind: 'sound'; floor: number; sound: SoundKind; room: RoomId })
+  // rules §9 — "footsteps and movement remain perceptible" in deep darkness.
+  // This is the channel that keeps a dark house navigable and populated, and
+  // it is the only way one player learns another exists through a wall.
+  | (Base & { kind: 'step'; actor: ActorId; room: RoomId; floor: number; hurried: boolean });
 
 export interface EventSink { emit(e: MatchEvent): void; drain(): MatchEvent[] }
 
@@ -918,6 +922,31 @@ describe('sim', () => {
     expect(sim.state.tick).toBe(1);
   });
 
+  // rules §9 — footsteps and movement remain perceptible
+  it('emits footsteps while moving and none while still', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const walker = sim.state.actors[0]!;
+    for (let i = 0; i < 60; i++) {
+      sim.step(new Map([[walker.id, { moveX: 1, moveY: 0, run: false }]]));
+    }
+    const walking = sim.drain().filter(e => e.kind === 'step');
+    expect(walking.length).toBeGreaterThan(0);
+    expect(walking.every(e => e.kind === 'step' && !e.hurried)).toBe(true);
+
+    for (let i = 0; i < 60; i++) sim.step(new Map());
+    expect(sim.drain().filter(e => e.kind === 'step')).toHaveLength(0);
+  });
+
+  it('emits footsteps more often when running than when walking', () => {
+    const count = (run: boolean) => {
+      const sim = createSim(HOLLOW, 42, IDS);
+      const id = sim.state.actors[0]!.id;
+      for (let i = 0; i < 120; i++) sim.step(new Map([[id, { moveX: 1, moveY: 0, run }]]));
+      return sim.drain().filter(e => e.kind === 'step').length;
+    };
+    expect(count(true)).toBeGreaterThan(count(false));
+  });
+
   it('emits move.enter when an actor changes room', () => {
     const sim = createSim(HOLLOW, 42, IDS);
     const walker = sim.state.actors[0]!;
@@ -999,11 +1028,18 @@ export const WALK_SPEED = 110;      // px/s
 export const RUN_SPEED = 190;
 export const CARRY_SLOWDOWN = 0.8;  // rules §10.1 — carrying a lantern is slower
 
+// rules §9/§20 — a moving player emits a footstep on this cadence. Running is
+// faster and therefore louder in frequency, which is how a listener tells
+// hurried movement from careful movement without being told.
+export const WALK_STEP_TICKS = 18;
+export const RUN_STEP_TICKS = 11;
+
 export interface Input { moveX: number; moveY: number; run: boolean }
 
 export interface Actor {
   id: ActorId; room: RoomId; at: Vec2; alive: boolean;
   carrying: 'none' | 'lantern' | 'sock';
+  stepCooldown: number;
 }
 
 export type LanternState =
@@ -1035,7 +1071,7 @@ export class Sim {
         const room = pool[i]!;
         const b = roomById(this.house, room).bounds;
         return {
-          id, room, alive: true, carrying: 'none' as const,
+          id, room, alive: true, carrying: 'none' as const, stepCooldown: 0,
           at: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
         };
       }),
@@ -1075,6 +1111,18 @@ export class Sim {
         this.sink.emit({
           kind: 'move.enter', tick: this.state.tick, night: this.state.night,
           actor: actor.id, room: result.room, via: result.crossed,
+        });
+      }
+
+      // rules §9 — footsteps remain perceptible however dark it gets. This is
+      // the only channel by which a player learns someone is in the next room.
+      if (actor.stepCooldown > 0) actor.stepCooldown--;
+      if (actor.stepCooldown === 0) {
+        actor.stepCooldown = input.run ? RUN_STEP_TICKS : WALK_STEP_TICKS;
+        this.sink.emit({
+          kind: 'step', tick: this.state.tick, night: this.state.night,
+          actor: actor.id, room: actor.room,
+          floor: roomById(this.house, actor.room).floor, hurried: input.run,
         });
       }
     }
@@ -1142,7 +1190,6 @@ Spec §4 lists "open and close doors" and "hide briefly behind furniture" in sli
 
 ```ts
 import { createSim, HIDE_TICKS } from '../src/core/sim';
-import { canTake } from '../src/core/take';
 import { stepPosition } from '../src/core/movement';
 import { HOLLOW } from '../src/house/hollow';
 
@@ -1179,64 +1226,29 @@ describe('toggleDoor', () => {
 });
 
 describe('hiding', () => {
-  function pairInDark() {
-    const sim = createSim(HOLLOW, 42, IDS);
-    sim.state.night = 6;
-    const b = HOLLOW.rooms.find(r => r.id === 'attic')!.bounds;
-    const spot = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-    for (const id of ['wren', 'pike']) {
-      const a = sim.state.actors.find(x => x.id === id)!;
-      a.room = 'attic'; a.at = { ...spot };
-    }
-    for (const a of sim.state.actors) {
-      if (a.id === 'wren' || a.id === 'pike') continue;
-      a.room = 'shared_bedroom';
-    }
-    return sim;
-  }
-
   // rules §9 — hide BRIEFLY. It must expire on its own.
   it('lasts HIDE_TICKS and then ends', () => {
-    const sim = pairInDark();
+    const sim = createSim(HOLLOW, 42, IDS);
     sim.beginHide('pike');
     expect(sim.isHidden('pike')).toBe(true);
     for (let i = 0; i < HIDE_TICKS; i++) sim.step(new Map());
     expect(sim.isHidden('pike')).toBe(false);
   });
 
-  it('makes you an invalid Take target while it lasts', () => {
-    const sim = pairInDark();
-    expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
-    sim.beginHide('pike');
-    expect(canTake(sim, 'wren', 'pike').ok).toBe(false);
-  });
-
-  // A hidden child cannot also be the witness that protects someone else —
-  // otherwise hiding would be strictly better than standing guard, and
-  // rules §19's anti-turtling would invert.
-  it('does not let a hidden child count as an intervening witness', () => {
-    const sim = pairInDark();
-    const clem = sim.state.actors.find(a => a.id === 'clem')!;
-    const pike = sim.state.actors.find(a => a.id === 'pike')!;
-    clem.room = 'attic';
-    clem.at = { x: pike.at.x + 30, y: pike.at.y };
-    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'witness' });
-    sim.beginHide('clem');
-    expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
-  });
-
   it('refuses to hide while carrying anything', () => {
-    const sim = pairInDark();
+    const sim = createSim(HOLLOW, 42, IDS);
     sim.state.actors.find(a => a.id === 'pike')!.carrying = 'lantern';
     expect(sim.beginHide('pike').ok).toBe(false);
   });
 });
 ```
 
+**Hiding's effect on the Take is deliberately not here.** `take.ts` does not exist until Task 7, and a task that imports a module three tasks ahead of itself cannot run. Task 7 owns that half.
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd v12 && npx vitest run test/doors.test.ts`
-Expected: FAIL — `stepPosition` takes four arguments, `toggleDoor` is not a function.
+Expected: FAIL — `stepPosition` accepts four arguments, and `toggleDoor` / `beginHide` / `isHidden` / `HIDE_TICKS` do not exist.
 
 - [ ] **Step 3: Add the closed-door parameter to movement**
 
@@ -1305,33 +1317,16 @@ Add three methods to `Sim`:
 
 Add `exitsOf` to the imports from `./house`.
 
-- [ ] **Step 5: Teach the Take about hiding**
-
-In `v12/src/core/take.ts`, inside `canTake`, immediately after the `taker.carrying === 'sock'` check:
-
-```ts
-  // rules §9 — a hidden child is not there to be taken
-  if (sim.isHidden(victimId)) return { ok: false, reason: 'out-of-contact' };
-```
-
-and in the witness check, exclude hidden children:
-
-```ts
-  const witness = sim.state.actors.some(a =>
-    a.alive && a.id !== takerId && a.id !== victimId && !sim.isHidden(a.id)
-    && a.room === victim.room && dist(a.at, victim.at) <= INTERVENE_RADIUS);
-```
-
-- [ ] **Step 6: Wire the keys**
+- [ ] **Step 5: Wire the keys**
 
 In `v12/src/app/input.ts` — **do this when Task 11 creates the file, not now** — extend `UiAction` with `'door' | 'hide'`, mapping `KeyF` to `'door'` and `KeyC` to `'hide'`. Note this here so Task 11's implementer does not have to rediscover it.
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `cd v12 && npm test`
 Expected: PASS, including Task 5's original movement tests, which use the defaulted fifth parameter.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add v12/
@@ -1624,6 +1619,29 @@ describe('canTake', () => {
     sim.state.actors.find(a => a.id === 'wren')!.carrying = 'sock';
     expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'carrying' });
   });
+
+  // rules §9 — hiding is granted to every player, and Task 5A built it.
+  // Its effect on the Take lives here because canTake lives here.
+  it('refuses against a hidden victim', () => {
+    const sim = pairInDarkRoom();
+    expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
+    sim.beginHide('pike');
+    expect(canTake(sim, 'wren', 'pike').ok).toBe(false);
+  });
+
+  // A hidden child must not also count as the witness that protects someone
+  // else — otherwise hiding is strictly better than standing guard, and
+  // rules §19's anti-turtling inverts.
+  it('does not let a hidden child count as an intervening witness', () => {
+    const sim = pairInDarkRoom();
+    const clem = sim.state.actors.find(a => a.id === 'clem')!;
+    const pike = sim.state.actors.find(a => a.id === 'pike')!;
+    clem.room = 'attic';
+    clem.at = { x: pike.at.x + 30, y: pike.at.y };
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'witness' });
+    sim.beginHide('clem');
+    expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
+  });
 });
 
 describe('TakeAttempt', () => {
@@ -1697,6 +1715,10 @@ export function canTake(sim: Sim, takerId: ActorId, victimId: ActorId): TakeChec
   // rules §11.4 — carrying a sock blocks your special action
   if (taker.carrying === 'sock') return { ok: false, reason: 'carrying' };
 
+  // rules §9 — a hidden child is not there to be taken. Hiding was built in
+  // Task 5A; this is the half of it that needed canTake to exist first.
+  if (sim.isHidden(victimId)) return { ok: false, reason: 'out-of-contact' };
+
   if (taker.room !== victim.room) return { ok: false, reason: 'out-of-contact' };
   if (dist(taker.at, victim.at) > CONTACT_RADIUS) return { ok: false, reason: 'out-of-contact' };
 
@@ -1714,9 +1736,11 @@ export function canTake(sim: Sim, takerId: ActorId, victimId: ActorId): TakeChec
   const level = lightAt(sim.state.night, victim.room, victim.at, sim.lightSources());
   if (level >= DARK_ENOUGH_FOR_TAKE) return { ok: false, reason: 'too-lit' };
 
-  // rules §12.1 — no second living child close enough to intervene
+  // rules §12.1 — no second living child close enough to intervene. A hidden
+  // child does not qualify: if hiding both saved you and protected everyone
+  // near you, it would strictly dominate standing guard.
   const witness = sim.state.actors.some(a =>
-    a.alive && a.id !== takerId && a.id !== victimId
+    a.alive && a.id !== takerId && a.id !== victimId && !sim.isHidden(a.id)
     && a.room === victim.room && dist(a.at, victim.at) <= INTERVENE_RADIUS);
   if (witness) return { ok: false, reason: 'witness' };
 
@@ -2318,7 +2342,9 @@ git commit -m "feat(v12): identity dissolves in the dark, decided in core not re
 - Consumes: everything above
 - Produces:
   - `soundFor(e: MatchEvent): SoundCue | null` where `type SoundCue = { file: string; volume: number }`
-  - `createInput(target: Window): InputSource` with `read(): Input & { action: 'place' | 'pickup' | 'interact' | null }`
+  - `audibleVolume(e: MatchEvent, listenerRoom: RoomId, house: House): number` — the cross-room perception model
+  - `playCue(cue: SoundCue, attenuation?: number): void`
+  - `createInput(target: Window): { read(): ReadInput; dispose(): void }`
   - `runNightScene(stage: Stage, seed: number, night: number): void`
 
 - [ ] **Step 1: Write the failing sound-mapping test**
@@ -2326,10 +2352,12 @@ git commit -m "feat(v12): identity dissolves in the dark, decided in core not re
 `v12/test/sounds.test.ts`:
 
 ```ts
-import { soundFor, SOUND_FILES } from '../src/audio/sounds';
+import { soundFor, SOUND_FILES, audibleVolume } from '../src/audio/sounds';
 import type { MatchEvent } from '../src/core/events';
+import { HOLLOW } from '../src/house/hollow';
 
 const SAMPLES: MatchEvent[] = [
+  { kind: 'step', tick: 0, night: 1, actor: 'bell', room: 'kitchen', floor: 0, hurried: false },
   { kind: 'move.enter', tick: 1, night: 1, actor: 'bell', room: 'kitchen', via: 'd_kit_lib' },
   { kind: 'lantern.place', tick: 2, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'kitchen', watching: 'd_kit_lib' },
   { kind: 'lantern.snuff', tick: 3, night: 2, actor: 'wren', lantern: 'lantern_a', room: 'kitchen' },
@@ -2346,8 +2374,8 @@ describe('soundFor', () => {
   });
 
   it('gives the Take and the Snuff distinguishable cues', () => {
-    const take = soundFor(SAMPLES[4]!)!, snuff = soundFor(SAMPLES[2]!)!;
-    expect(take.file).not.toBe(snuff.file);
+    const of = (kind: string) => soundFor(SAMPLES.find(e => e.kind === kind)!)!;
+    expect(of('take.complete').file).not.toBe(of('lantern.snuff').file);
   });
 
   it('references only declared files', () => {
@@ -2355,6 +2383,42 @@ describe('soundFor', () => {
       const cue = soundFor(e);
       if (cue) expect(SOUND_FILES).toContain(cue.file);
     }
+  });
+
+  // rules §20 — players must be able to tell hurried movement from careful
+  it('makes a hurried footstep louder than a careful one', () => {
+    const step = (hurried: boolean): MatchEvent =>
+      ({ kind: 'step', tick: 0, night: 1, actor: 'bell', room: 'kitchen', floor: 0, hurried });
+    expect(soundFor(step(true))!.volume).toBeGreaterThan(soundFor(step(false))!.volume);
+  });
+});
+
+describe('audibleVolume', () => {
+  const step: MatchEvent =
+    { kind: 'step', tick: 0, night: 1, actor: 'bell', room: 'kitchen', floor: 0, hurried: false };
+
+  it('is full in the same room', () => {
+    expect(audibleVolume(step, 'kitchen', HOLLOW)).toBe(1);
+  });
+
+  // This is what makes the dark house feel occupied: sight stops at the room
+  // boundary, so hearing is the only channel that crosses one.
+  it('carries into an adjacent room, quieter', () => {
+    const v = audibleVolume(step, 'hearth', HOLLOW);
+    expect(v).toBeGreaterThan(0);
+    expect(v).toBeLessThan(1);
+  });
+
+  it('carries faintly across the same floor', () => {
+    const near = audibleVolume(step, 'hearth', HOLLOW);
+    const far = audibleVolume(step, 'cellar', HOLLOW);
+    expect(far).toBeGreaterThan(0);
+    expect(far).toBeLessThan(near);
+  });
+
+  // rules §12.1 — a Take is audible on that floor, not through it
+  it('does not carry between floors', () => {
+    expect(audibleVolume(step, 'attic', HOLLOW)).toBe(0);
   });
 });
 ```
@@ -2409,6 +2473,7 @@ Expected: FAIL — modules unresolved.
 
 ```ts
 import type { MatchEvent } from '../core/events';
+import { exitsOf, otherSide, type House, type RoomId } from '../core/house';
 
 export type SoundCue = { file: string; volume: number };
 
@@ -2421,6 +2486,7 @@ export const SOUND_FILES = [
 
 export function soundFor(e: MatchEvent): SoundCue | null {
   switch (e.kind) {
+    case 'step':            return { file: 'step.wav', volume: e.hurried ? 0.5 : 0.3 };
     case 'move.enter':      return { file: 'door.wav', volume: 0.5 };
     case 'door.toggle':     return { file: 'door.wav', volume: 0.4 };
     case 'lantern.carry':   return { file: 'lantern-set.wav', volume: 0.3 };
@@ -2434,9 +2500,36 @@ export function soundFor(e: MatchEvent): SoundCue | null {
   }
 }
 
-export function playCue(cue: SoundCue): void {
+/** How loud an event is to a listener standing in `listenerRoom`.
+ *
+ *  This is the whole cross-room perception model for slice 0, and it is what
+ *  makes the dark house feel occupied rather than empty. rules §9 keeps
+ *  footsteps perceptible in deep darkness; §12.1 makes a Take audible on its
+ *  floor. Sight stops at the room boundary, so hearing is the only channel
+ *  that crosses one. */
+export function audibleVolume(
+  e: MatchEvent, listenerRoom: RoomId, house: House,
+): number {
+  const room = 'room' in e ? e.room : null;
+  if (!room) return 1;
+  if (room === listenerRoom) return 1;
+
+  const adjacent = exitsOf(house, listenerRoom)
+    .some(d => otherSide(d, listenerRoom) === room);
+  if (adjacent) return 0.45;
+
+  // rules §12.1 — a Take is audible on that floor, but not through it.
+  const here = house.rooms.find(r => r.id === listenerRoom);
+  const there = house.rooms.find(r => r.id === room);
+  if (here && there && here.floor === there.floor) return 0.15;
+  return 0;
+}
+
+export function playCue(cue: SoundCue, attenuation = 1): void {
+  const volume = cue.volume * attenuation;
+  if (volume <= 0.01) return;
   const a = new Audio(`/sfx/${cue.file}`);
-  a.volume = cue.volume;
+  a.volume = Math.min(volume, 1);
   void a.play().catch(() => { /* autoplay policy; ignored until first input */ });
 }
 ```
@@ -2486,7 +2579,7 @@ export function createInput(target: Window): { read(): ReadInput; dispose(): voi
 
 ```ts
 import { Container, Graphics } from 'pixi.js';
-import { playCue, soundFor } from '../../audio/sounds';
+import { audibleVolume, playCue, soundFor } from '../../audio/sounds';
 import { exitsOf } from '../../core/house';
 import { applyLanternAction } from '../../core/lantern';
 import { createSim, DT, type Input, type Sim } from '../../core/sim';
@@ -2567,9 +2660,10 @@ export function runNightScene(stage: Stage, seed: number, night: number): void {
       inputs.set(STALKER, stalker.nextInput(sim));
       sim.step(inputs);
       stalker.tickBehaviour(sim);
+      const listener = sim.state.actors.find(a => a.id === PLAYER);
       for (const e of sim.drain()) {
         const cue = soundFor(e);
-        if (cue) playCue(cue);
+        if (cue && listener) playCue(cue, audibleVolume(e, listener.room, HOLLOW));
       }
     }
     drawLighting(lighting, HOLLOW, sim.state.night, sim.lightSources());
@@ -2604,13 +2698,15 @@ Controls: **WASD/arrows** move, **Shift** runs, **E** picks up a lantern, **Q** 
 
 Create `docs/findings/2026-07-29-slice-0-acceptance.md` and answer each spec §4 criterion in writing, **including the ones that fail**:
 
-1. Navigation survives: traverse all ten rooms and both stairs at `?night=6` without a minimap. Pass/fail.
-2. Identity does not: at `?night=6`, can you tell which child is which at 3 room-widths? It must be **no**, while still seeing that someone is there. Pass/fail.
-3. A placed lantern visibly changes what is knowable about a doorway. Pass/fail.
-4. The Take fires, warns, and can be escaped by reaching lantern light. Pass/fail.
-5. `npm test` green, including determinism.
+1. **Navigation survives.** Traverse all ten rooms and both stairs at `?night=6` without a minimap. Pass/fail.
+2. **Identity does not.** Stand at the far corner of a room from another child at `?night=6`, unlit. You must **not** be able to tell which child it is — while the silhouette stays visible. Pass/fail.
+   *(Stated in terms of within-room distance deliberately: sight stops at the room boundary, so "three room-widths" would be measuring an actor that is not drawn at all.)*
+3. **The house sounds occupied through a wall.** Stand still in one room while another child moves in an adjacent one. You must be able to hear that someone is moving, without being able to tell who. Pass/fail.
+4. A placed lantern visibly changes what is knowable about a doorway. Pass/fail.
+5. The Take fires, warns, and can be escaped by reaching lantern light. Pass/fail.
+6. `npm test` green, including determinism.
 
-If criterion 2 fails, the house is too bright — tune `AMBIENT_BY_NIGHT` and `MAX_OVERLAY`, never the criterion.
+If criterion 2 fails, the house is too bright — tune `AMBIENT_BY_NIGHT` and `MAX_OVERLAY`, never the criterion. If criterion 3 fails, the game has no cross-room perception at all, and darkness will read as emptiness rather than threat.
 
 - [ ] **Step 8: Commit**
 
@@ -2679,13 +2775,27 @@ describe('projectForHouse', () => {
     expect(JSON.stringify(p.lanternRecords)).not.toContain('moss');
   });
 
-  it('counts flames from the events of that night only', () => {
+  it('counts flames lost in that night only', () => {
     const p = projectForHouse(log([
       { kind: 'flame.out', tick: 1, night: 2, reason: 'take', remaining: 4 },
       { kind: 'flame.out', tick: 1, night: 3, reason: 'snuff', remaining: 3 },
     ]), 3);
     expect(p.flamesLost).toBe(1);
     expect(p.flamesRemaining).toBe(3);
+  });
+
+  // Flames remaining is a stock and must carry across quiet nights.
+  it('carries flames remaining through a night that lost none', () => {
+    const l = log([
+      { kind: 'flame.out', tick: 1, night: 2, reason: 'take', remaining: 4 },
+      { kind: 'flame.out', tick: 1, night: 5, reason: 'snuff', remaining: 3 },
+    ]);
+    expect(projectForHouse(l, 1).flamesRemaining).toBe(5);
+    expect(projectForHouse(l, 2).flamesRemaining).toBe(4);
+    expect(projectForHouse(l, 3).flamesRemaining).toBe(4);  // quiet night, still 4
+    expect(projectForHouse(l, 4).flamesRemaining).toBe(4);
+    expect(projectForHouse(l, 5).flamesRemaining).toBe(3);
+    expect(projectForHouse(l, 3).flamesLost).toBe(0);
   });
 
   it('reports floor-level sounds without the room that made them', () => {
@@ -2763,8 +2873,16 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
   const watched = new Map<RoomId, { doors: Set<string>; moved: boolean }>();
   const crossings = new Map<RoomId, number>();
   let flamesLost = 0;
-  let flamesRemaining = 5;
   let socksSecured = 0;
+
+  // Flames are a STOCK; flames lost is a FLOW. What remains carries across
+  // nights — computing it from this night's events alone reports five on
+  // every quiet night. This repository has made exactly this stock-for-flow
+  // substitution before; do not collapse these two loops.
+  let flamesRemaining = 5;
+  for (const e of log.events) {
+    if (e.kind === 'flame.out' && e.night <= night) flamesRemaining = e.remaining;
+  }
 
   for (const e of nightly) {
     switch (e.kind) {
@@ -2774,7 +2892,6 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
         break;
       case 'flame.out':
         flamesLost++;
-        flamesRemaining = e.remaining;
         break;
       case 'sound':
         floorSounds.push({ floor: e.floor, sound: e.sound });
@@ -2915,8 +3032,13 @@ describe('renderReport', () => {
 
   it('says the house saw nothing rather than nothing at all', () => {
     const lines = renderReport(projectForHouse(log([]), 1), HOLLOW);
-    expect(lines.length).toBeGreaterThan(0);
     expect(lines.join('\n')).toMatch(/saw nothing|stayed dark/i);
+  });
+
+  // §13.1 reads the flame count out every morning, not only when one went out
+  it('reports flames remaining on a night that lost none', () => {
+    const lines = renderReport(projectForHouse(log([]), 1), HOLLOW);
+    expect(lines.join('\n')).toMatch(/No flame went out\. 5 remain\./);
   });
 
   it('announces the Midnight room on night four — rules §18', () => {
@@ -2955,11 +3077,13 @@ export function renderReport(p: HouseProjection, house: House): string[] {
     lines.push(`${child} did not return.`);
   }
 
-  if (p.flamesLost > 0) {
-    lines.push(p.flamesLost === 1
-      ? `One flame went out. ${p.flamesRemaining} remain.`
-      : `${p.flamesLost} flames went out. ${p.flamesRemaining} remain.`);
-  }
+  // §13.1 lists "flames lost, and how many remain" among the things the house
+  // reads out EVERY morning, so this line is unconditional. A quiet night that
+  // silently omitted the count would let the children lose track of the clock.
+  lines.push(
+    p.flamesLost === 0 ? `No flame went out. ${p.flamesRemaining} remain.`
+    : p.flamesLost === 1 ? `One flame went out. ${p.flamesRemaining} remain.`
+    : `${p.flamesLost} flames went out. ${p.flamesRemaining} remain.`);
 
   for (const rec of p.lanternRecords) {
     const head = `The ${name(rec.room)} lantern`;
@@ -2997,7 +3121,8 @@ export function renderReport(p: HouseProjection, house: House): string[] {
     lines.push(`At Midnight, the ${name(p.midnightRoom)} will show what stands in it.`);
   }
 
-  if (lines.length === 0) lines.push('The house stayed dark. The house saw nothing.');
+  // The flame line always prints, so "nothing happened" means one line only.
+  if (lines.length === 1) lines.push('The house stayed dark. The house saw nothing.');
   return lines;
 }
 ```
@@ -3048,6 +3173,18 @@ describe('SIX_NIGHT_MATCH', () => {
       expect(renderReport(projectForHouse(SIX_NIGHT_MATCH, n), HOLLOW).length,
              `night ${n}`).toBeGreaterThan(0);
     }
+  });
+
+  // Flames only ever go out (rules §7). If remaining ever rises across the
+  // six nights, the projection is treating a stock as a flow.
+  it('never lets flames remaining rise across the six nights', () => {
+    let previous = 5;
+    for (let n = 1; n <= 6; n++) {
+      const now = projectForHouse(SIX_NIGHT_MATCH, n).flamesRemaining;
+      expect(now, `night ${n}`).toBeLessThanOrEqual(previous);
+      previous = now;
+    }
+    expect(previous).toBe(2);   // one Take, one Snuff, one failed Call
   });
 
   it('references only rooms and doors the house actually has', () => {

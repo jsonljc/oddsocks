@@ -230,12 +230,15 @@ everything stays legible fails §9 as surely as one where you get lost.
 
 1. **Navigation survives.** A player can traverse all eight rooms plus both stair connections
    without getting lost, on night six's ambient level, without a minimap.
-2. **Identity does not.** At night six's ambient level, an observer cannot tell which child is
-   which at a stated distance — while still being able to tell that *someone* is there.
+2. **Identity does not.** At night six's ambient level, an observer at the far side of the same
+   room cannot tell which child is which — while the silhouette stays visible.
    Without this criterion, every other one is satisfiable by a house that is simply too bright.
-3. Placing a lantern visibly changes what is knowable about a doorway.
-4. The Take fires, warns, and can be escaped by reaching lantern light.
-5. `core/` runs headless in a test with no Pixi import, and the same seed plus the same inputs
+3. **The house sounds occupied through a wall.** A still player hears another child moving in an
+   adjacent room, without learning who. Sight stops at the room boundary, so sound is the only
+   channel that crosses one — and without it, darkness reads as emptiness rather than threat.
+4. Placing a lantern visibly changes what is knowable about a doorway.
+5. The Take fires, warns, and can be escaped by reaching lantern light.
+6. `core/` runs headless in a test with no Pixi import, and the same seed plus the same inputs
    produce a byte-identical event stream. Slice 0 emits a **provisional** stream; slice 1 pins
    the schema. Determinism is required from the first tick, because retrofitting it is expensive
    and slice 2b's server depends on it.
