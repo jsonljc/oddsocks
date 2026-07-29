@@ -42,9 +42,14 @@ function botsFor(config: GameConfig, villain: PlayerId, cell: Cell): Record<Play
 }
 
 /**
- * The villain is drawn inside `playGame`, but the policies differ by role, so
- * each game is played once per candidate villain and the seed that matches is
- * kept. Simpler and slower than threading the draw out; correctness first.
+ * The villain is drawn inside `playGame`, but policies differ by role, so each
+ * game is played twice on one seed: once with uniform bots to learn who the
+ * villain is, then again with the right policies. Reported `games` is therefore
+ * half the games actually simulated.
+ *
+ * DEPENDS ON THE VILLAIN BEING THE FIRST RNG DRAW in `createGame`. If that ever
+ * stops being true the probe silently desynchronises from the real game, every
+ * policy is assigned to the wrong player, and nothing in the suite fails.
  */
 function playWithRoles(config: GameConfig, seed: number, cell: Cell): GameRecord {
   // createGame picks the villain with the first rng draw, so play once with a

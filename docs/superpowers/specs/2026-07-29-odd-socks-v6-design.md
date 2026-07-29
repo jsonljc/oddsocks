@@ -370,8 +370,10 @@ and there is a regression test so nobody repairs it later.
    the softest number in the table.
 3. **Does spoke capacity 2 produce solo searching**, or do children pair up and accept the 1-in-5
    that their partner is Odd Socks? The bots search solo by construction, so this is untested.
-4. **Is the faceless dark playable**, or does "I counted three" collapse into noise nobody acts
-   on? No simulation reaches this.
+4. **The faceless dark contributes exactly nothing to the numbers above.** `suspicion()` reads
+   lit rosters and socks on lit floors; it never touches the count-in-the-dark channel, so the
+   mechanic §5 calls load-bearing — and that Mab, Wren and Fen are built around — is untested,
+   not merely unproven at a table.
 5. **Night one is the biggest single night for takes** (53.3% of games), because everyone starts
    together and scatters blind. Whether it should be safe, as the predecessor's was, is open.
 
