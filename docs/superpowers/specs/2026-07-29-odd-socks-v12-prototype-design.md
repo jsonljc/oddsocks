@@ -225,11 +225,17 @@ strengths.
 
 ### Acceptance
 
-1. A player can traverse all eight rooms plus both stair connections without getting lost, on
-   night six's ambient level, without a minimap.
-2. Placing a lantern visibly changes what is knowable about a doorway.
-3. The Take fires, warns, and can be escaped by reaching lantern light.
-4. `core/` runs headless in a test with no Pixi import, and the same seed plus the same inputs
+§6.2's rule is **two-part**, and acceptance must fail in both directions. A house where
+everything stays legible fails §9 as surely as one where you get lost.
+
+1. **Navigation survives.** A player can traverse all eight rooms plus both stair connections
+   without getting lost, on night six's ambient level, without a minimap.
+2. **Identity does not.** At night six's ambient level, an observer cannot tell which child is
+   which at a stated distance — while still being able to tell that *someone* is there.
+   Without this criterion, every other one is satisfiable by a house that is simply too bright.
+3. Placing a lantern visibly changes what is knowable about a doorway.
+4. The Take fires, warns, and can be escaped by reaching lantern light.
+5. `core/` runs headless in a test with no Pixi import, and the same seed plus the same inputs
    produce a byte-identical event stream. Slice 0 emits a **provisional** stream; slice 1 pins
    the schema. Determinism is required from the first tick, because retrofitting it is expensive
    and slice 2b's server depends on it.
@@ -250,6 +256,14 @@ strengths.
   enforced by the type signature (§3.3).
 - The claim board (§13.2): place one claim per morning, all four link types, permanent public
   stack, visible contradiction.
+
+**Review the report renderer for inferential leakage, not only literal leakage.** The type
+signature in §3.3 stops the *code* emitting a name. It does not stop the *report* identifying
+someone. §10.3 has a lantern report direction, count, timing and whether movement was calm or
+hurried — with six players and one doorway, that combination frequently names the person to
+anyone who was in the adjacent room. That may well be intended (§3.3: the house never lies, it
+only hides), but slice 1 against a hand-authored log is where it would otherwise be discovered
+by accident.
 
 ### What this answers
 
@@ -336,9 +350,35 @@ postmortem, full timeline, haunting reel, lobby, reconnection, accessibility.
 
 ---
 
-## 8. Ambiguities in v12.0 that must be resolved before they are implemented
+## 8. Problems in v12.0 found while reading it against this build order
 
-Found while reading the specification against this build order. Each one blocks a specific slice.
+### 8.0 — A defect, not an ambiguity: §12.4's anti-hiding rule is weakest against hiding
+
+**This is a design defect and should be fixed in the rules, not pinned in the implementation.**
+
+§12.4 Sheds a sock "into the exact room the Odd Sock ended the night in," and states its purpose:
+hiding must carry "a price sharp enough that sitting still for six nights loses." Now follow the
+villain who actually commits to hiding. §13 requires every living player to return to bed, so the
+villain must end each night in or beside the Shared Bedroom anyway. That is the one room where a
+Shed sock is either meaningless or is surrounded by five other children with equal claim to it.
+
+Both resolutions of the timing are bad:
+
+- **Resolve after the return to bed** → every Shed lands in the Shared Bedroom and is worthless.
+- **Resolve before the return** → the villain idles in a room adjacent to the bedroom and pays
+  almost nothing.
+
+So the anti-hiding rule is at its weakest against precisely the strategy it exists to punish.
+§32 Q4 asks whether dawn-after-six is too kind to hiding; this answers it on paper, before any
+play. §30's own kill conditions would flag it.
+
+**This blocks nothing in slices 0 or 1** — no build decision waits on it. It needs a rules
+answer before slice 2b, and it is recorded here so it is not discovered by a playtest that cost
+six people an evening.
+
+### 8.1–8.8 — Ambiguities that must be resolved before they are implemented
+
+Each one blocks a specific slice.
 
 **8.1 — §16.3: can the doorway-holder also be the watcher?** The Bind needs both exits sealed and
 "at least one living child keeping sight." If the child holding exit B also counts as the
@@ -352,12 +392,9 @@ intent is: **a sock records the room a child picked it up from, and never its or
 works because it changes the pickup room. Pin this wording before implementing Displace. Blocks
 slice 2b.
 
-**8.3 — §12.4: where does a Shed sock land if the Odd Sock ends the night in the Shared
-Bedroom?** §13 has every living player return to bed. If "the exact room the Odd Sock ended the
-night in" resolves after that return, every Shed lands in the Shared Bedroom and is either
-instantly damning or entirely worthless. Pin "ended the night" to the room occupied when the
-night timer expires, before the return to bed — or exclude the Shared Bedroom explicitly.
-Blocks slice 2b.
+**8.3 — §12.4: when does "the night ended"?** Promoted to §8.0 above — pinning the timing does
+not repair it, because both answers fail. Left here as a pointer so the numbering matches
+anything already referencing it.
 
 **8.4 — §11.4: what enforces "the Odd Sock may not carry a sock into the Shared Bedroom"?** If it
 is a hard block, the villain is visibly unable to enter and it is a tell that ends the game. If
