@@ -22,7 +22,10 @@ Every task's requirements implicitly include this section.
 - **The scripted stalker never produces a number.** No metrics, no counters, no win-rate API. It is set dressing for solo feel-testing (spec §9.1).
 - **No economy simulator** for rules §32 Q2/Q3/Q4 (spec §9.2). Out of scope entirely.
 - TypeScript `strict: true`. All new code has tests unless explicitly noted as unverifiable-without-a-human.
-- Work on branch `v12`. Commit at the end of every task.
+- Work on branch `v12`. Commit at the end of every task. **Every commit message ends with the repo's trailer**, which the per-task `git commit` commands below omit for brevity:
+  ```
+  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+  ```
 
 ## File Structure
 
