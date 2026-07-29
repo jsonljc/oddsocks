@@ -125,7 +125,17 @@ export const searcherBot: Bot = {
       }
     }
 
-    if (isSpoke(house, k.position)) return go(landingOf(house, k.position)); // forced
+    if (isSpoke(house, k.position)) {
+      // Still holding light? Where the spokes join, carry it to the next dark
+      // room instead of walking it back into the lit landing.
+      const onward = legalMoves(house, k.position)
+        .filter((r) => isSpoke(house, r) && (k.burningAt[r] ?? 0) === 0);
+      if (k.held?.t === 'lantern' && onward.length > 0) {
+        const unread = onward.filter((r) => !searched(k).has(r));
+        return go((unread[0] ?? onward[0])!, { setDown: true, takeUp: 'sock' });
+      }
+      return go(landingOf(house, k.position));
+    }
 
     const hand = k.held;
     // Children talk each morning, so they can divide the house between them.
@@ -178,9 +188,12 @@ export const hunterBot: Bot = {
   morning: () => STAY,
   night: (k, rng) => {
     const house = k.config.house;
-    if (isSpoke(house, k.position)) return go(landingOf(house, k.position));
-    const spokes = spokesOf(house, k.position);
-    return go(spokes.length > 0 ? rng.pick(spokes) : anywhere(k, rng));
+    // Read the map rather than assuming it. On a dead-end house this still
+    // walks spoke -> landing -> spoke; where the spokes are joined it lets the
+    // villain stay in the dark, which is the whole point of testing the ring.
+    const reach = legalMoves(house, k.position);
+    const spokes = reach.filter((r) => isSpoke(house, r));
+    return go(spokes.length > 0 ? rng.pick(spokes) : rng.pick(reach));
   },
 };
 

@@ -1,5 +1,9 @@
 import { type Cell, type Result, runCell } from '../analysis/sweep.js';
 import type { ChildPolicy, VillainPolicy } from '../bots/policies.js';
+import { HOLLOW_20, HOLLOW_20_RING } from '../rules/house.js';
+
+const ring = process.argv.includes('--ring');
+const house = ring ? HOLLOW_20_RING : HOLLOW_20;
 
 const games = Number(process.argv[2] ?? 500);
 
@@ -8,7 +12,7 @@ const villains: VillainPolicy[] = ['light', 'hunter', 'random'];
 
 const pct = (x: number) => (Number.isNaN(x) ? '   —  ' : `${(x * 100).toFixed(1).padStart(5)}%`);
 
-console.log(`\nODD SOCKS v6 — ${games} games per cell\n`);
+console.log(`\nODD SOCKS v6 — ${games} games per cell — ${ring ? 'spokes RINGED' : 'spokes are dead ends'}\n`);
 console.log(
   '  children   villain  | kids win  cornrd  taken   dark  stall | nights takes  shed | namings  acc  |' +
   ' reads lifted pairs',
@@ -18,7 +22,7 @@ console.log('  ' + '-'.repeat(115));
 const results: Result[] = [];
 for (const child of children) {
   for (const villain of villains) {
-    const cell: Cell = { child, villain };
+    const cell: Cell = { child, villain, overrides: { house } };
     const r = runCell(cell, games);
     results.push(r);
     console.log(

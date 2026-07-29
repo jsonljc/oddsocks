@@ -6,7 +6,11 @@ import type { House, PlayerId, Room, RoomId } from './types.js';
  * landing, spoke — for any number of spokes, which is why the design can scale
  * the house without scaling the travel time.
  */
-export function makeHouse(spokesPerFloor: readonly number[], spokeCapacity = 2): House {
+export function makeHouse(
+  spokesPerFloor: readonly number[],
+  spokeCapacity = 2,
+  ring = false,
+): House {
   if (spokesPerFloor.length < 2) throw new Error('a house needs at least two floors');
   if (spokeCapacity < 1) throw new Error(`spokeCapacity must be >= 1, got ${spokeCapacity}`);
 
@@ -20,12 +24,21 @@ export function makeHouse(spokesPerFloor: readonly number[], spokeCapacity = 2):
       id: landings[floor]!, kind: 'landing', floor,
       doors: [...stairs, ...spokes], capacity: Infinity,
     };
-    for (const id of spokes) {
+    spokes.forEach((id, i) => {
+      // A ring joins each spoke to its neighbours along the same floor. Without
+      // it a spoke is a strict dead end, so anyone who steps into one is forced
+      // back out the next night and the whole cast phase-locks — measured at 600
+      // takes on odd nights against 27 on even ones, every player in a spoke on
+      // odd nights and under a candle on even ones. Diameter is unaffected:
+      // spoke, landing, landing, landing, spoke is still 4.
+      const neighbours = ring && spokes.length > 2
+        ? [spokes[(i + 1) % spokes.length]!, spokes[(i - 1 + spokes.length) % spokes.length]!]
+        : [];
       rooms[id] = {
         id, kind: 'spoke', floor,
-        doors: [landings[floor]!], capacity: spokeCapacity,
+        doors: [landings[floor]!, ...neighbours], capacity: spokeCapacity,
       };
-    }
+    });
   });
 
   return {
@@ -42,6 +55,9 @@ export function makeHouse(spokesPerFloor: readonly number[], spokeCapacity = 2):
 
 /** 20 rooms, three floors, diameter 4 — the house the design specifies. */
 export const HOLLOW_20 = makeHouse([6, 5, 6]);
+
+/** The same house with the spokes joined along each floor. */
+export const HOLLOW_20_RING = makeHouse([6, 5, 6], 2, true);
 
 export const SCALES: Readonly<Record<number, readonly number[]>> = {
   4: [4, 3, 4],     // 14 rooms

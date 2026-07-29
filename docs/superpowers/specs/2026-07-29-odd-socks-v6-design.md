@@ -129,8 +129,16 @@ dominate.
 
 ## 6. Socks and the trail
 
-- **Odd Socks sheds a sock in every dark room they end a night in.** Not on takes — on nights.
-  A lit room takes no sock, so the shed is never witnessed.
+- **Odd Socks sheds a sock every night, in whatever room they sleep in.** Not on takes — on
+  nights. The house never says whose it is.
+
+**[MEASURED — this rule was changed by the engine.]** It first read *"in every dark room they end
+a night in,"* which let the villain opt out of producing evidence altogether: a villain who never
+left the lit landings shed **zero** socks and won **100%** of games, with the children at 0% in
+every cell, because their only route needs socks. Shedding everywhere closes it, and the light
+carries the load instead — **a sock on a lit floor arrives beside that room's published roster,
+so it names a suspect set rather than just a room.** Staying in the light is now the villain's
+*best* line rather than a free one: children win 30% against it, against 42–45% for the others.
 - **You cannot see what lies on a dark floor.** You take up what is on the floor of the room you
   end the night in only if that room is **lit at night's end** and you have a hand free. Searching
   is therefore advertising: the lantern lights the room, and the room says your name.
@@ -308,31 +316,54 @@ been played or simulated.
 | Take target | children − 1 (4 at six players) | Derived, not tuned |
 | Spoke capacity | 2 | Structural. Changing it re-opens the committee |
 
-### The one assumption the design rests on
+### The assumption the design rested on — falsified, then fixed
 
-**That the villain's light-side line does not dominate.** A villain who bounces between lit
-landings sheds nothing, is named on a manifest every night alongside everyone else, cannot take
-on a crowded landing — and wins by default when the candles die. If that line is dominant, v6
-stalls the same way v5 does, one level up.
+**That the villain's light-side line does not dominate.** As first specified it dominated
+completely: **100% wins, zero socks shed, children 0% in every cell.** The argument in its favour
+— that such a villain gives up half their win conditions — was simply wrong, because children
+scattering into the spokes leaves landings holding exactly two, so a villain who never enters a
+spoke still takes people. The fix is §6's unconditional shed. Recorded because the argument
+sounded good and this project has now been wrong in exactly this shape five times.
 
-The argument that it does not: the children control five of six bodies and therefore the clock,
-so they answer a light-side villain by emptying the landings, which starves the burn to its base
-rate and buys the nights they need to work the trail; and a villain who never enters a spoke
-never takes anyone, giving up half their win conditions. **This is an argument, not a
-measurement, and this project has been wrong exactly this way before.** It is the first thing the
-engine must answer.
+### Measured, 300 games a cell, six players
 
-### Ranked, everything else unmeasured
+| children | villain | children win | by Corner | villain by takes | by dark | nights | naming accuracy |
+|---|---|---|---|---|---|---|---|
+| huddle | light | **0%** | 0% | 0% | 100% | 7.4 | — |
+| huddle | hunter | **0%** | 0% | 0% | 100% | 9.0 | — |
+| huddle | random | **0%** | 0% | 0% | 100% | 8.9 | — |
+| searcher | light | 30.0% | 30.0% | 33.0% | 37.0% | 5.6 | 44.8% |
+| searcher | hunter | 43.3% | 43.3% | 8.7% | 48.0% | 6.5 | 50.6% |
+| searcher | random | 45.3% | 45.3% | 13.0% | 41.7% | 6.3 | 56.9% |
 
-1. **Shed rate versus the wax clock.** Can the children assemble a pair *and* make a correct
-   Naming before the last candle, against a villain playing well? The single number the game
-   lives on.
-2. **Does the Corner ever fire?** The predecessor's capture fired zero times across every
-   configuration. If v6's fires under 5%, the children are back to one route.
-3. **Does spoke capacity 2 actually produce solo searching**, or do children simply pair up and
-   accept the 1-in-5 that their partner is Odd Socks?
-4. **Game length.** Target 7–9 nights. v5 measured 14–20.
-5. **Is the faceless dark playable**, or does "I counted three" collapse into noise nobody acts on?
+All three routes are live, the Corner fires 30–45% (against the predecessor's **zero**, in every
+configuration ever tested), naming beats the ~20% chance rate, and **the huddle loses 100% of the
+time in every cell while never once being taken** — which is the whole point of moving the
+objective off the socks. These are assertions in `src/v6/bots/policies.test.ts`, not notes.
+
+### The metronome, and why it stays
+
+Spokes are dead ends, so anyone who steps into one is forced back out the next night. That
+phase-locks the whole cast: **600 takes on odd nights against 27 on even ones**, with spoke
+occupancy oscillating 71.7% → 22.8% → 71.7%. Half the nights cannot produce a take and everybody
+knows which half.
+
+The obvious repair — join the spokes along each floor, so nobody is ever forced anywhere —
+**destroys the game**: children 0%, zero socks lifted, zero Namings, because Odd Socks can then
+stay in the dark all game and never appear on a lit roster to be counted beside their own sock.
+**The forced return is the evidence channel.** The metronome is the price, it is paid knowingly,
+and there is a regression test so nobody repairs it later.
+
+### Still unmeasured
+
+1. **The characters.** None of the ten is implemented. Every number above is the bare game.
+2. **Game length runs short** — 5.6–6.6 nights against a 7–9 target. Wax is the knob.
+3. **Does spoke capacity 2 produce solo searching**, or do children pair up and accept the 1-in-5
+   that their partner is Odd Socks? The bots search solo by construction, so this is untested.
+4. **Is the faceless dark playable**, or does "I counted three" collapse into noise nobody acts
+   on? No simulation reaches this.
+5. **Night one is the biggest single night for takes** (53.3% of games), because everyone starts
+   together and scatters blind. Whether it should be safe, as the predecessor's was, is open.
 
 ---
 

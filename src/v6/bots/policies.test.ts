@@ -84,3 +84,30 @@ describe('the assertions the spine lives on', () => {
     expect(r.darkOut).toBeGreaterThan(0.02);
   });
 });
+
+/**
+ * The metronome is load-bearing, and this is the test that says so.
+ *
+ * Spokes are dead ends, so anyone who steps into one is forced back out the
+ * next night. Measured, that phase-locks the whole cast: 600 takes on odd
+ * nights against 27 on even ones. It reads like a defect — half the nights
+ * cannot produce a take and everybody knows which half — and the obvious repair
+ * is to join the spokes along each floor so nobody is ever forced anywhere.
+ *
+ * That repair destroys the game. Joined spokes let Odd Socks stay in the dark
+ * for the whole game, so they never appear on a lit roster and never shed
+ * beside one. The evidence channel is the forced return.
+ */
+describe('the dead ends are the evidence channel', () => {
+  it('joining the spokes takes the children to zero', async () => {
+    const { HOLLOW_20_RING } = await import('../rules/house.js');
+    const ringed = runCell(
+      { child: 'searcher', villain: 'hunter', overrides: { house: HOLLOW_20_RING } }, 150);
+    const deadEnds = runCell({ child: 'searcher', villain: 'hunter' }, 150);
+
+    expect(ringed.namings).toBe(0);            // nothing to name with
+    expect(ringed.meanSocksLifted).toBe(0);    // no sock ever reaches a hand
+    expect(ringed.childrenWin).toBe(0);
+    expect(deadEnds.childrenWin).toBeGreaterThan(0.2);
+  });
+});
