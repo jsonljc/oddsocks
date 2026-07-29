@@ -33,7 +33,12 @@ export function makeConfig(overrides: Partial<GameConfig> = {}): GameConfig {
   const base: GameConfig = {
     house,
     roster,
-    startingWax: [17, 13, 9],
+    // Tuned, not guessed. 17/13/9 ran 6.1 nights and left the children at
+    // 30/45/46 against the three villain lines; this runs 7.3 and gives
+    // 41/66/60, inside the 7-9 target with the villain's best line — simply
+    // staying in the light — still ahead. More wax monotonically favours the
+    // children, since every extra night is another night to work the trail.
+    startingWax: [25, 19, 13],
     lanterns: 3,
     takeTarget: roster.length - 2,
     maxNights: 40,

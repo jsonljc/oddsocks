@@ -311,7 +311,7 @@ been played or simulated.
 
 | Knob | Provisional | Note |
 |---|---|---|
-| Candle wax | 17 / 13 / 9, ground to attic | Staggered so the house darkens top-down and the lit space shrinks |
+| Candle wax | 25 / 19 / 13, ground to attic | **Tuned.** Staggered so the house darkens top-down. This is the knob that sets both length and balance |
 | Lanterns | 3, one on each landing, shut | Public and symmetric at setup |
 | Take target | children − 1 (4 at six players) | Derived, not tuned |
 | Spoke capacity | 2 | Structural. Changing it re-opens the committee |
@@ -325,16 +325,20 @@ scattering into the spokes leaves landings holding exactly two, so a villain who
 spoke still takes people. The fix is §6's unconditional shed. Recorded because the argument
 sounded good and this project has now been wrong in exactly this shape five times.
 
-### Measured, 300 games a cell, six players
+### Measured, 400 games a cell, six players, wax 25/19/13
 
-| children | villain | children win | by Corner | villain by takes | by dark | nights | naming accuracy |
-|---|---|---|---|---|---|---|---|
-| huddle | light | **0%** | 0% | 0% | 100% | 7.4 | — |
-| huddle | hunter | **0%** | 0% | 0% | 100% | 9.0 | — |
-| huddle | random | **0%** | 0% | 0% | 100% | 8.9 | — |
-| searcher | light | 30.0% | 30.0% | 33.0% | 37.0% | 5.6 | 44.8% |
-| searcher | hunter | 43.3% | 43.3% | 8.7% | 48.0% | 6.5 | 50.6% |
-| searcher | random | 45.3% | 45.3% | 13.0% | 41.7% | 6.3 | 56.9% |
+| children | villain | children win | villain by takes | by dark | nights | naming accuracy |
+|---|---|---|---|---|---|---|
+| huddle | light | **0%** | 0% | 100% | 10.6 | — |
+| huddle | hunter | **0%** | 0% | 100% | 13.0 | — |
+| huddle | random | **0%** | 0% | 100% | 12.6 | — |
+| searcher | light | 41.5% | 40.5% | 18.0% | 6.6 | 53.5% |
+| searcher | hunter | 67.3% | 15.5% | 17.3% | 7.9 | 52.5% |
+| searcher | random | 60.8% | 17.5% | 21.8% | 7.8 | 55.4% |
+
+Every children's win is by Corner; there is no other route. Wax was tuned against game length:
+17/13/9 gave 6.1 nights and 30/45/46, and more wax monotonically favours the children because
+every extra night is another night to work the trail.
 
 All three routes are live, the Corner fires 30–45% (against the predecessor's **zero**, in every
 configuration ever tested), naming beats the ~20% chance rate, and **the huddle loses 100% of the
@@ -357,7 +361,9 @@ and there is a regression test so nobody repairs it later.
 ### Still unmeasured
 
 1. **The characters.** None of the ten is implemented. Every number above is the bare game.
-2. **Game length runs short** — 5.6–6.6 nights against a 7–9 target. Wax is the knob.
+2. **How much of the villain's 41.5% is the bot's crudeness.** `hunterBot` picks spokes at
+   random; a villain who used the rosters would do better, and the children's 67.3% against it is
+   the softest number in the table.
 3. **Does spoke capacity 2 produce solo searching**, or do children pair up and accept the 1-in-5
    that their partner is Odd Socks? The bots search solo by construction, so this is untested.
 4. **Is the faceless dark playable**, or does "I counted three" collapse into noise nobody acts
