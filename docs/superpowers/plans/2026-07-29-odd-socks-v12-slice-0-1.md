@@ -387,6 +387,10 @@ This is the structural guard from Global Constraints. `v12/test/boundaries.test.
 ```ts
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The package is "type": "module", so __dirname does not exist. Derive it.
+const TEST_DIR = fileURLToPath(new URL('.', import.meta.url));
 
 function filesUnder(dir: string): string[] {
   return readdirSync(dir).flatMap(entry => {
@@ -401,7 +405,7 @@ describe('layer boundaries', () => {
   // core/ and log/ run on the server in slice 2b. If a browser import ever
   // reaches them the authoritative model stops being portable, silently.
   it.each(['src/core', 'src/log', 'src/house'])('%s imports no browser layer', dir => {
-    for (const file of filesUnder(join(__dirname, '..', dir))) {
+    for (const file of filesUnder(join(TEST_DIR, '..', dir))) {
       const src = readFileSync(file, 'utf8');
       for (const layer of FORBIDDEN) {
         expect(src).not.toMatch(new RegExp(`from ['"][^'"]*${layer}/`));
@@ -410,7 +414,7 @@ describe('layer boundaries', () => {
   });
 
   it.each(['src/core', 'src/log'])('%s reads no wall clock and no global random', dir => {
-    for (const file of filesUnder(join(__dirname, '..', dir))) {
+    for (const file of filesUnder(join(TEST_DIR, '..', dir))) {
       const src = readFileSync(file, 'utf8');
       expect(src).not.toMatch(/Math\.random\(/);
       expect(src).not.toMatch(/Date\.now\(|performance\.now\(/);
@@ -1134,7 +1138,8 @@ export class Sim {
       if (l.state.kind === 'placed') {
         if (l.state.lit) out.push({ room: l.state.room, at: l.state.at, radius: LANTERN_RADIUS });
       } else {
-        const holder = this.state.actors.find(a => a.id === (l.state as { by: ActorId }).by);
+        const holderId = l.state.by;
+        const holder = this.state.actors.find(a => a.id === holderId);
         if (holder?.alive) {
           out.push({ room: holder.room, at: holder.at, radius: CARRIED_LANTERN_RADIUS });
         }
@@ -1832,10 +1837,13 @@ git commit -m "feat(v12): the Take, with every §12.1 condition under test"
 
 ```ts
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createSim } from '../src/core/sim';
 import { createStalker } from '../src/scripted/stalker';
 import { HOLLOW } from '../src/house/hollow';
+
+// "type": "module" — no __dirname.
+const STALKER_SRC = fileURLToPath(new URL('../src/scripted/stalker.ts', import.meta.url));
 
 const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
 
@@ -1866,7 +1874,7 @@ describe('scripted stalker', () => {
 
   // spec §9.1 — a scripted actor, never a measurement instrument
   it('exposes no metrics surface', () => {
-    const src = readFileSync(join(__dirname, '..', 'src/scripted/stalker.ts'), 'utf8');
+    const src = readFileSync(STALKER_SRC, 'utf8');
     expect(src).not.toMatch(/winRate|stats|metrics|counter|tally/i);
     const stalker = createStalker(HOLLOW, 'wren', 7);
     expect(Object.keys(stalker).sort()).toEqual(['nextInput', 'tickBehaviour']);
