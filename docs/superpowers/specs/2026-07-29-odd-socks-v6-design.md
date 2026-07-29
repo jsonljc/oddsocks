@@ -26,7 +26,7 @@ Underneath all three sits one defect: **the children's only win route is gated o
 choosing to act.** Socks come only from takes. Evidence is downstream of the villain's decisions
 — that is what evidence is — so an objective made of evidence can always be starved.
 
-**v6 fixes that at the root: Odd Socks sheds a sock in every dark room they sleep in, whether
+**v6 fixes that at the root: Odd Socks sheds a sock every night, wherever they sleep, whether
 they hunt or not.** Everything else follows.
 
 ---
@@ -35,7 +35,7 @@ they hunt or not.** Everything else follows.
 
 1. Move one room a night. Everyone moves at once, in secret.
 2. Odd Socks can take you when the two of you are the only ones in a room. One is safe. Three is safe.
-3. Odd Socks sheds a sock in every dark room they sleep in. They cannot help it.
+3. Odd Socks sheds a sock every night, wherever they sleep. They cannot help it.
 4. The landings are lit and burn wax while you stand under them. The spokes are dark, and free,
    and hold two.
 5. You cannot see what lies on a dark floor. Bring a light, and the room will say your name.
@@ -114,16 +114,20 @@ from its spokes. The mandatory-movement rule is kept for texture, not balance.
 
 ### Why this makes the huddle lose, without a rule that says so
 
-The children control five of six bodies, so **the children set the clock.** Hiding in the dark
-spokes costs the house nothing and the candles last; huddling in trios under the candles burns
-them down and hands Odd Socks the win. The safe formation is the losing formation, and it is
-derived from the wax arithmetic rather than bolted on.
+The children are five of six bodies, so they carry most of the burn. Hiding in the dark spokes
+costs the house nothing and the candles last; huddling under them burns them down and hands Odd
+Socks the win. The safe formation is the losing formation, derived from the wax arithmetic rather
+than bolted on. **[MEASURED]** It holds: a table that never splits loses 100% of games in every
+cell, and is never once taken while doing it.
 
-The villain's mirror of the same trade: a night in the dark sheds a sock, a night in the light
-does not — but the light writes their name on the manifest and only speeds the clock by one.
+**[MEASURED — one claim here is weaker than it was written.]** "The children set the clock" is
+only half true. Spokes are dead ends, so everyone is forced under a candle every other night
+whatever they intend, and the burn floor is roughly fixed. Sheltering versus scattering moves the
+house from ~10.6 nights to ~7.9, which is real but is a dial, not a lever. The huddle loses
+because it produces nothing, not because it burns notably faster.
 
-**[ASSUMPTION — the load-bearing one, see §12]** That the villain's light-side line does not
-dominate.
+The villain's mirror of the same trade: the dark hides where their sock falls, but the light is
+where their name is written down beside it.
 
 ---
 
@@ -138,7 +142,7 @@ left the lit landings shed **zero** socks and won **100%** of games, with the ch
 every cell, because their only route needs socks. Shedding everywhere closes it, and the light
 carries the load instead — **a sock on a lit floor arrives beside that room's published roster,
 so it names a suspect set rather than just a room.** Staying in the light is now the villain's
-*best* line rather than a free one: children win 30% against it, against 42–45% for the others.
+*best* line rather than a free one: children win 41.5% against it, against 61–67% for the others.
 - **You cannot see what lies on a dark floor.** You take up what is on the floor of the room you
   end the night in only if that room is **lit at night's end** and you have a hand free. Searching
   is therefore advertising: the lantern lights the room, and the room says your name.
