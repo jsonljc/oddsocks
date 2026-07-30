@@ -1059,14 +1059,17 @@ git commit -m "feat(v12): the event stream core emits, provisional until slice 1
 - Test: `v12/test/light.test.ts`
 
 **Interfaces:**
-- Consumes: `Vec2`, `dist` from `core/geometry`; `RoomId` from `core/house`
+- Consumes: `Vec2`, `dist` from `core/geometry`; `House`, `RoomId` from `core/house`; `makeRng` from `core/rng`
 - Produces:
-  - `AMBIENT_BY_NIGHT: readonly number[]`, `DARK_ENOUGH_FOR_TAKE: number`, `IDENTIFY_THRESHOLD: number`, `LANTERN_RADIUS: number`, `CARRIED_LANTERN_RADIUS: number`
+  - `LIT_AMBIENT_BY_NIGHT`, `DARK_AMBIENT_BY_NIGHT`, `DARK_ROOM_COUNT_BY_NIGHT` (all `readonly number[]`), `ALWAYS_LIT: readonly RoomId[]`, `DARK_ENOUGH_FOR_TAKE`, `IDENTIFY_THRESHOLD`, `LANTERN_RADIUS`, `CARRIED_LANTERN_RADIUS`
   - `interface LightSource { room: RoomId; at: Vec2; radius: number }`
-  - `ambientForNight(night: number): number`
-  - `lightAt(night: number, room: RoomId, p: Vec2, sources: readonly LightSource[]): number`
+  - `darkRoomsFor(house: House, night: number, seed: number): Set<RoomId>`
+  - `ambientFor(night: number, room: RoomId, dark: ReadonlySet<RoomId>): number`
+  - `lightAt(night: number, room: RoomId, p: Vec2, sources: readonly LightSource[], dark: ReadonlySet<RoomId>): number`
   - `type Visibility = 'identified' | 'silhouette' | 'unseen'`
   - `visibilityAt(level: number): Visibility`
+
+**Downstream note for later tasks:** `lightAt` takes a fifth argument. `Sim` (Task 5) owns the night's dark set and exposes it as `sim.darkRooms`; `canTake` (Task 7), `appearanceOf` (Task 10) and `drawLighting` (Task 9) all pass it through.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1074,62 +1077,132 @@ git commit -m "feat(v12): the event stream core emits, provisional until slice 1
 
 ```ts
 import {
-  AMBIENT_BY_NIGHT, ambientForNight, lightAt, visibilityAt,
+  LIT_AMBIENT_BY_NIGHT, DARK_AMBIENT_BY_NIGHT, DARK_ROOM_COUNT_BY_NIGHT, ALWAYS_LIT,
+  ambientFor, darkRoomsFor, lightAt, visibilityAt,
   DARK_ENOUGH_FOR_TAKE, IDENTIFY_THRESHOLD, LANTERN_RADIUS,
 } from '../src/core/light';
+import { HOLLOW } from '../src/house/hollow';
 
-describe('ambient', () => {
-  // rules §18: nights 1-2 keep faint ambient visibility; night 3 drops; 5-6 harsher
-  it('falls monotonically from night one to night six', () => {
+const SEED = 4242;
+const dark = (night: number) => darkRoomsFor(HOLLOW, night, SEED);
+
+describe('darkRoomsFor', () => {
+  it('is deterministic for a seed and grows with the night', () => {
+    expect([...dark(3)].sort()).toEqual([...darkRoomsFor(HOLLOW, 3, SEED)].sort());
     for (let n = 2; n <= 6; n++) {
-      expect(ambientForNight(n)).toBeLessThanOrEqual(ambientForNight(n - 1));
+      expect(dark(n).size, `night ${n}`).toBeGreaterThanOrEqual(dark(n - 1).size);
     }
-    expect(ambientForNight(6)).toBeLessThan(ambientForNight(1));
   });
 
-  it('is bright enough to identify on night one and too dark by night six', () => {
-    expect(ambientForNight(1)).toBeGreaterThanOrEqual(IDENTIFY_THRESHOLD);
-    expect(ambientForNight(6)).toBeLessThan(DARK_ENOUGH_FOR_TAKE);
+  // Nested, so the house is learnable rather than re-rolled every night.
+  it('never re-lights a room that was dark the night before', () => {
+    for (let n = 2; n <= 6; n++) {
+      for (const room of dark(n - 1)) expect(dark(n).has(room), `${room} n${n}`).toBe(true);
+    }
   });
 
-  it('clamps out-of-range nights rather than returning undefined', () => {
-    expect(ambientForNight(0)).toBe(AMBIENT_BY_NIGHT[0]);
-    expect(ambientForNight(99)).toBe(AMBIENT_BY_NIGHT[AMBIENT_BY_NIGHT.length - 1]);
+  it('never darkens the Hearth — it is on fire', () => {
+    for (let n = 1; n <= 6; n++) {
+      for (const lit of ALWAYS_LIT) expect(dark(n).has(lit), `n${n}`).toBe(false);
+    }
+  });
+
+  it('matches the scheduled count', () => {
+    for (let n = 1; n <= 6; n++) {
+      expect(dark(n).size, `night ${n}`).toBe(DARK_ROOM_COUNT_BY_NIGHT[n - 1]);
+    }
+  });
+
+  it('varies between matches', () => {
+    expect([...darkRoomsFor(HOLLOW, 3, 1)].sort())
+      .not.toEqual([...darkRoomsFor(HOLLOW, 3, 2)].sort());
+  });
+});
+
+// THE REGRESSION THAT MATTERS. The first version of this file used one global
+// ambient per night, which made every room too bright to grab in on nights 2
+// and 3 — so the game could not start until Night Four, against v12.2 §13,
+// which bans the grab on Night One ONLY. These two tests pin that per night.
+describe('the house is playable on every night it should be', () => {
+  it('offers a grabbable room on every night from two onward', () => {
+    for (let n = 2; n <= 6; n++) {
+      const rooms = HOLLOW.rooms.filter(r => dark(n).has(r.id));
+      expect(rooms.length, `night ${n} has no dark room`).toBeGreaterThan(0);
+      const level = lightAt(n, rooms[0]!.id, { x: 0, y: 0 }, [], dark(n));
+      expect(level, `night ${n} dark room is too bright to grab in`)
+        .toBeLessThan(DARK_ENOUGH_FOR_TAKE);
+    }
+  });
+
+  it('keeps at least one room where you can still see faces, every night', () => {
+    for (let n = 1; n <= 6; n++) {
+      const litRooms = HOLLOW.rooms.filter(r => !dark(n).has(r.id));
+      expect(litRooms.length, `night ${n}`).toBeGreaterThan(0);
+      const level = lightAt(n, litRooms[0]!.id, { x: 0, y: 0 }, [], dark(n));
+      expect(level, `night ${n} lit room hides faces`).toBeGreaterThanOrEqual(IDENTIFY_THRESHOLD);
+    }
+  });
+});
+
+describe('ambientFor', () => {
+  it('separates lit from dark, and both curves fall with the night', () => {
+    for (let n = 2; n <= 6; n++) {
+      expect(LIT_AMBIENT_BY_NIGHT[n - 1]!).toBeLessThanOrEqual(LIT_AMBIENT_BY_NIGHT[n - 2]!);
+      expect(DARK_AMBIENT_BY_NIGHT[n - 1]!).toBeLessThanOrEqual(DARK_AMBIENT_BY_NIGHT[n - 2]!);
+    }
+    expect(Math.max(...DARK_AMBIENT_BY_NIGHT)).toBeLessThan(DARK_ENOUGH_FOR_TAKE);
+    expect(Math.min(...LIT_AMBIENT_BY_NIGHT)).toBeGreaterThanOrEqual(IDENTIFY_THRESHOLD);
+  });
+
+  it('clamps out-of-range and fractional nights rather than returning undefined', () => {
+    const none = new Set<string>();
+    expect(ambientFor(0, 'kitchen', none)).toBe(LIT_AMBIENT_BY_NIGHT[0]);
+    expect(ambientFor(99, 'kitchen', none)).toBe(LIT_AMBIENT_BY_NIGHT[5]);
+    expect(Number.isFinite(ambientFor(2.5, 'kitchen', none))).toBe(true);
   });
 });
 
 describe('lightAt', () => {
   const lantern = { room: 'kitchen', at: { x: 100, y: 100 }, radius: LANTERN_RADIUS };
+  const allDark = new Set(HOLLOW.rooms.map(r => r.id));
 
   it('is ambient with no sources', () => {
-    expect(lightAt(6, 'kitchen', { x: 0, y: 0 }, [])).toBe(ambientForNight(6));
+    expect(lightAt(6, 'kitchen', { x: 0, y: 0 }, [], allDark))
+      .toBe(ambientFor(6, 'kitchen', allDark));
   });
 
   it('is full at a lantern and ambient beyond its radius', () => {
-    expect(lightAt(6, 'kitchen', { x: 100, y: 100 }, [lantern])).toBe(1);
-    expect(lightAt(6, 'kitchen', { x: 100 + LANTERN_RADIUS + 1, y: 100 }, [lantern]))
-      .toBe(ambientForNight(6));
+    expect(lightAt(6, 'kitchen', { x: 100, y: 100 }, [lantern], allDark)).toBe(1);
+    expect(lightAt(6, 'kitchen', { x: 100 + LANTERN_RADIUS + 1, y: 100 }, [lantern], allDark))
+      .toBe(ambientFor(6, 'kitchen', allDark));
   });
 
   it('does not leak between rooms', () => {
-    expect(lightAt(6, 'library', { x: 100, y: 100 }, [lantern])).toBe(ambientForNight(6));
+    expect(lightAt(6, 'library', { x: 100, y: 100 }, [lantern], allDark))
+      .toBe(ambientFor(6, 'library', allDark));
   });
 
   it('falls off with distance inside the radius', () => {
-    const near = lightAt(6, 'kitchen', { x: 130, y: 100 }, [lantern]);
-    const far  = lightAt(6, 'kitchen', { x: 190, y: 100 }, [lantern]);
+    const near = lightAt(6, 'kitchen', { x: 130, y: 100 }, [lantern], allDark);
+    const far  = lightAt(6, 'kitchen', { x: 190, y: 100 }, [lantern], allDark);
     expect(near).toBeGreaterThan(far);
+  });
+
+  // v12.2 §5 — a placed lantern "stops the Odd Sock grabbing anyone inside the light"
+  it('lifts a dark room above the grab threshold where the lantern reaches', () => {
+    expect(lightAt(6, 'kitchen', { x: 110, y: 100 }, [lantern], allDark))
+      .toBeGreaterThanOrEqual(DARK_ENOUGH_FOR_TAKE);
   });
 });
 
 describe('visibilityAt', () => {
-  // rules §9: in deep darkness names disappear and silhouettes obscure,
-  // but movement stays perceptible — so 'unseen' must be rare, not the default.
-  it('identifies in light, silhouettes in the dark, and never blinds entirely at ambient', () => {
+  // v12.2 §4 — in the dark names vanish and outlines blur, but you can still
+  // hear footsteps. So darkness degrades to a silhouette, never to nothing.
+  it('identifies in light, silhouettes in the dark, and never blinds at any ambient', () => {
     expect(visibilityAt(1)).toBe('identified');
     expect(visibilityAt(IDENTIFY_THRESHOLD)).toBe('identified');
     expect(visibilityAt(IDENTIFY_THRESHOLD - 0.01)).toBe('silhouette');
-    expect(visibilityAt(ambientForNight(6))).toBe('silhouette');
+    for (const a of DARK_AMBIENT_BY_NIGHT) expect(visibilityAt(a)).toBe('silhouette');
     expect(visibilityAt(0)).toBe('unseen');
   });
 });
@@ -1146,31 +1219,72 @@ Expected: FAIL — cannot resolve `../src/core/light`.
 
 ```ts
 import { dist, type Vec2 } from './geometry';
-import type { RoomId } from './house';
+import type { House, RoomId } from './house';
+import { makeRng } from './rng';
 
-/** rules §18's escalation, as numbers. Index 0 is night one.
- *  Nights 1-2 keep faint ambient visibility; night 3 drops; 5-6 are harsher. */
-export const AMBIENT_BY_NIGHT = [0.55, 0.50, 0.30, 0.22, 0.14, 0.08] as const;
+/** v12.2 §13 — "Faint light almost everywhere," then progressively less of it.
+ *
+ *  **Ambient is per room, not per night.** A single global floor cannot express
+ *  "almost", and the first version of this file proved why: with one number a
+ *  night, no point in the house could ever be darker than that night's floor, so
+ *  no grab was possible until Night Four and the game could not start. v12.2 §13
+ *  bans the grab on Night One *only*.
+ *
+ *  So a room is either faintly lit — you can see faces — or dark, where you
+ *  cannot and where you can be taken. What escalates is HOW MANY rooms are dark
+ *  and how dark they get. */
+export const LIT_AMBIENT_BY_NIGHT  = [0.60, 0.55, 0.52, 0.50, 0.48, 0.46] as const;
+export const DARK_AMBIENT_BY_NIGHT = [0.20, 0.16, 0.13, 0.10, 0.08, 0.06] as const;
+
+/** Of twelve rooms. The Hearth is never dark — it is literally on fire — so
+ *  eleven is the ceiling. */
+export const DARK_ROOM_COUNT_BY_NIGHT = [3, 5, 7, 9, 11, 11] as const;
 
 export const IDENTIFY_THRESHOLD = 0.45;
 export const DARK_ENOUGH_FOR_TAKE = 0.25;
 export const LANTERN_RADIUS = 120;
 export const CARRIED_LANTERN_RADIUS = 45;
 
+export const ALWAYS_LIT: readonly RoomId[] = ['hearth'];
+
 export interface LightSource { room: RoomId; at: Vec2; radius: number }
 
-export function ambientForNight(night: number): number {
-  const i = Math.min(Math.max(night - 1, 0), AMBIENT_BY_NIGHT.length - 1);
-  return AMBIENT_BY_NIGHT[i]!;
+function atNight<T>(table: readonly T[], night: number): T {
+  return table[Math.min(Math.max(Math.round(night) - 1, 0), table.length - 1)]!;
 }
 
-/** Light is room-scoped. rules §10.2 says a lantern "illuminates a defined
- *  area", and rooms are boxes, so a source never reaches past its own room.
- *  That is also what makes the render-side mask cheap. */
+/** Which rooms are dark on a given night. Deterministic from the match seed, and
+ *  **nested** — a room dark on night n is still dark on n+1 — so the house is
+ *  learnable rather than re-rolled nightly. */
+export function darkRoomsFor(house: House, night: number, seed: number): Set<RoomId> {
+  const candidates = house.rooms
+    .map(r => r.id)
+    .filter(id => !ALWAYS_LIT.includes(id));
+
+  // Shuffle once per match, then take a prefix that only grows with the night.
+  const rng = makeRng(seed);
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = rng.int(i + 1);
+    [candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!];
+  }
+  const count = Math.min(atNight(DARK_ROOM_COUNT_BY_NIGHT, night), candidates.length);
+  return new Set(candidates.slice(0, count));
+}
+
+export function ambientFor(night: number, room: RoomId, dark: ReadonlySet<RoomId>): number {
+  return dark.has(room)
+    ? atNight(DARK_AMBIENT_BY_NIGHT, night)
+    : atNight(LIT_AMBIENT_BY_NIGHT, night);
+}
+
+/** Light is room-scoped. v12.2 §5 says a placed lantern lights *its room*, and
+ *  rooms are boxes, so a source never reaches past its own. That is also what
+ *  makes the render-side mask cheap. */
 export function lightAt(
-  night: number, room: RoomId, p: Vec2, sources: readonly LightSource[],
+  night: number, room: RoomId, p: Vec2,
+  sources: readonly LightSource[], dark: ReadonlySet<RoomId>,
 ): number {
-  let level = ambientForNight(night);
+  let level = ambientFor(night, room, dark);
   for (const s of sources) {
     if (s.room !== room) continue;
     const d = dist(s.at, p);
@@ -1413,7 +1527,7 @@ export function stepPosition(
 import { makeSink, type ActorId, type EventSink, type LanternId, type MatchEvent } from './events';
 import type { Vec2 } from './geometry';
 import { roomById, type DoorId, type House, type RoomId } from './house';
-import { CARRIED_LANTERN_RADIUS, LANTERN_RADIUS, type LightSource } from './light';
+import { CARRIED_LANTERN_RADIUS, LANTERN_RADIUS, darkRoomsFor, type LightSource } from './light';
 import { ACTOR_RADIUS, stepPosition } from './movement';
 import { makeRng } from './rng';
 
@@ -1452,7 +1566,7 @@ export class Sim {
   readonly state: SimState;
   private readonly sink: EventSink = makeSink();
 
-  constructor(readonly house: House, seed: number, actorIds: ActorId[]) {
+  constructor(readonly house: House, private readonly seed: number, actorIds: ActorId[]) {
     const rng = makeRng(seed);
     // rules §8: six different starting rooms, one player each, randomised.
     const pool = this.house.rooms.filter(r => r.id !== 'hearth').map(r => r.id);
@@ -1522,6 +1636,14 @@ export class Sim {
         });
       }
     }
+  }
+
+  /** v12.2 §13 — which rooms are dark tonight. A getter rather than a field
+   *  because both the scene and the tests set `state.night` directly, and a
+   *  cached set would silently go stale the moment they did. `darkRoomsFor` is
+   *  deterministic from (house, night, seed), so this stays replay-safe. */
+  get darkRooms(): ReadonlySet<RoomId> {
+    return darkRoomsFor(this.house, this.state.night, this.seed);
   }
 
   lightSources(): LightSource[] {
@@ -2176,7 +2298,8 @@ export function canTake(sim: Sim, takerId: ActorId, victimId: ActorId): TakeChec
     }
   }
 
-  const level = lightAt(sim.state.night, victim.room, victim.at, sim.lightSources());
+  const level = lightAt(
+    sim.state.night, victim.room, victim.at, sim.lightSources(), sim.darkRooms);
   if (level >= DARK_ENOUGH_FOR_TAKE) return { ok: false, reason: 'too-lit' };
 
   // rules §12.1 — no second living child close enough to intervene. A hidden
@@ -2454,12 +2577,13 @@ git commit -m "feat(v12): a scripted stalker that never produces a number"
 - Test: `v12/test/lighting.test.ts`
 
 **Interfaces:**
-- Consumes: `House`, `Room`, `SimState`, `LightSource`, `ambientForNight`
+- Consumes: `House`, `Room`, `RoomId`, `SimState`, `LightSource`, `ambientFor`
 - Produces:
   - `createStage(el: HTMLElement): Promise<Stage>` where `Stage { app: Application; world: Container; centreOn(p: Vec2): void }`
   - `drawRooms(world: Container, house: House): void`
   - `maskCirclesFor(sources: readonly LightSource[], house: House): MaskCircle[]` where `interface MaskCircle { x: number; y: number; r: number }`
-  - `drawLighting(layer: Graphics, house: House, night: number, sources: readonly LightSource[]): void`
+  - `overlayAlphaFor(night: number, room: RoomId, dark: ReadonlySet<RoomId>): number`
+  - `drawLighting(layer: Graphics, house: House, night: number, sources: readonly LightSource[], dark: ReadonlySet<RoomId>): void`
 
 The mask **geometry** is a pure function and is tested. The Pixi draw call is not — it is verified by eye in Task 12.
 
@@ -2490,20 +2614,30 @@ describe('maskCirclesFor', () => {
 });
 
 describe('overlayAlphaFor', () => {
-  // The darkness overlay must never reach full opacity: rules §6.2 says
-  // darkness may conceal identity and detail but must NEVER obscure
-  // navigation. An alpha of 1 would do exactly that.
-  it('never fully blacks out, even on night six', () => {
+  const none = new Set<string>();
+  const allDark = new Set(HOLLOW.rooms.map(r => r.id));
+
+  // v12.2 §3 — dark rooms hide who you are; they NEVER hide where the doors
+  // are. An alpha of 1 would hide the doors.
+  it('never fully blacks out, even in a dark room on night six', () => {
     for (let n = 1; n <= 6; n++) {
-      expect(overlayAlphaFor(n)).toBeLessThan(1);
-      expect(overlayAlphaFor(n)).toBeGreaterThanOrEqual(0);
+      expect(overlayAlphaFor(n, 'kitchen', allDark)).toBeLessThan(1);
+      expect(overlayAlphaFor(n, 'kitchen', allDark)).toBeGreaterThanOrEqual(0);
     }
   });
 
   it('darkens monotonically across the nights', () => {
     for (let n = 2; n <= 6; n++) {
-      expect(overlayAlphaFor(n)).toBeGreaterThanOrEqual(overlayAlphaFor(n - 1));
+      expect(overlayAlphaFor(n, 'kitchen', allDark))
+        .toBeGreaterThanOrEqual(overlayAlphaFor(n - 1, 'kitchen', allDark));
     }
+  });
+
+  // The reason it is per room: a player must be able to tell a dark room from
+  // a lit one through a doorway, or the escalation is invisible.
+  it('makes a dark room visibly darker than a lit one on the same night', () => {
+    expect(overlayAlphaFor(4, 'kitchen', allDark))
+      .toBeGreaterThan(overlayAlphaFor(4, 'kitchen', none));
   });
 });
 ```
@@ -2519,8 +2653,8 @@ Expected: FAIL — cannot resolve `../src/render/lighting`.
 
 ```ts
 import { Graphics } from 'pixi.js';
-import { ambientForNight, type LightSource } from '../core/light';
-import type { House } from '../core/house';
+import { ambientFor, type LightSource } from '../core/light';
+import type { House, RoomId } from '../core/house';
 
 export interface MaskCircle { x: number; y: number; r: number }
 
@@ -2537,18 +2671,24 @@ export function maskCirclesFor(
  *  room silhouette and its exits stay legible at every night. */
 const MAX_OVERLAY = 0.92;
 
-export function overlayAlphaFor(night: number): number {
-  return Math.min((1 - ambientForNight(night)) * MAX_OVERLAY, MAX_OVERLAY);
+/** Per room, because darkness is per room (v12.2 §13's "almost everywhere").
+ *  A dark room and a faintly lit one must look different from a doorway — that
+ *  readability is the whole point of slice 0. */
+export function overlayAlphaFor(
+  night: number, room: RoomId, dark: ReadonlySet<RoomId>,
+): number {
+  return Math.min((1 - ambientFor(night, room, dark)) * MAX_OVERLAY, MAX_OVERLAY);
 }
 
 export function drawLighting(
-  layer: Graphics, house: House, night: number, sources: readonly LightSource[],
+  layer: Graphics, house: House, night: number,
+  sources: readonly LightSource[], dark: ReadonlySet<RoomId>,
 ): void {
   layer.clear();
   for (const room of house.rooms) {
     layer.rect(room.bounds.x, room.bounds.y, room.bounds.w, room.bounds.h);
+    layer.fill({ color: 0x05040a, alpha: overlayAlphaFor(night, room.id, dark) });
   }
-  layer.fill({ color: 0x05040a, alpha: overlayAlphaFor(night) });
 
   // Warm pools punched back out of the dark — rules §21's "warm pools of
   // lantern light against cold muted surroundings".
@@ -2749,7 +2889,8 @@ export function appearanceOf(
   if (!observer || !target || observer.room !== target.room) {
     return { visibility: 'unseen', showName: false, saturation: 0, alpha: 0 };
   }
-  const level = lightAt(sim.state.night, target.room, target.at, sim.lightSources());
+  const level = lightAt(
+    sim.state.night, target.room, target.at, sim.lightSources(), sim.darkRooms);
   const visibility = visibilityAt(level);
   return {
     visibility,
@@ -3142,7 +3283,7 @@ export function runNightScene(stage: Stage, seed: number, night: number): void {
         if (cue && listener) playCue(cue, audibleVolume(e, listener.room, HOLLOW));
       }
     }
-    drawLighting(lighting, HOLLOW, sim.state.night, sim.lightSources());
+    drawLighting(lighting, HOLLOW, sim.state.night, sim.lightSources(), sim.darkRooms);
     drawActors(actors, names, sim, PLAYER);
     const me = sim.state.actors.find(a => a.id === PLAYER);
     if (me) stage.centreOn(me.at);
@@ -3182,7 +3323,7 @@ Create `docs/findings/2026-07-29-slice-0-acceptance.md` and answer each spec §4
 5. The Take fires, warns, and can be escaped by reaching lantern light. Pass/fail.
 6. `npm test` green, including determinism.
 
-If criterion 2 fails, the house is too bright — tune `AMBIENT_BY_NIGHT` and `MAX_OVERLAY`, never the criterion. If criterion 3 fails, the game has no cross-room perception at all, and darkness will read as emptiness rather than threat.
+Run criterion 2 **in a room that is dark tonight** — darkness is per room now (v12.2 §13), so a faintly lit room hiding nobody's face is correct behaviour, not a failure. If it fails in a dark room, tune `DARK_AMBIENT_BY_NIGHT` and `MAX_OVERLAY`, never the criterion. If criterion 3 fails, the game has no cross-room perception at all, and darkness will read as emptiness rather than threat.
 
 - [ ] **Step 8: Commit**
 
