@@ -2093,6 +2093,13 @@ git commit -m "feat(v12): lanterns, and §10.2's one watched doorway"
 
 ## Task 7: The Take
 
+> **Shipped code is ahead of the tests written below.** After two implementer deaths and an
+> independent review, `v12/test/take.test.ts` strengthened three cases beyond what this section
+> shows: the hidden-victim test now pins `reason: 'out-of-contact'` rather than asserting `.ok`
+> alone, and the completion and stays-broken tests now assert the grab-speed penalty is cleared.
+> Each was mutation-confirmed. Read the shipped file as the record of what is tested; this section
+> is the record of what was asked for.
+
 **Files:**
 - Create: `v12/src/core/take.ts`
 - Test: `v12/test/take.test.ts`
