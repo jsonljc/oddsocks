@@ -1908,7 +1908,7 @@ git commit -m "feat(v12): doors that close, and somewhere to hide"
 **Interfaces:**
 - Consumes: `Sim`, `Actor`, `Lantern` from `core/sim`
 - Produces: `type LanternAction = { kind: 'pickup'; lantern: LanternId } | { kind: 'place'; watching: DoorId } | { kind: 'snuff'; lantern: LanternId } | { kind: 'relight'; lantern: LanternId }`; `applyLanternAction(sim, actorId, action): { ok: boolean; reason?: string }`
-- Also extends `Input` with `action?: LanternAction`
+- **Does not extend `Input`.** An earlier draft routed lantern actions through `Input.action`, but nothing consumes it: Task 11's scene calls `applyLanternAction` directly, and the established pattern for `toggleDoor` and `beginHide` is a direct method on `Sim`. Dead API surface — YAGNI.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1952,24 +1952,31 @@ describe('lantern actions', () => {
     expect(r.reason).toMatch(/sock/i);
   });
 
-  // rules §10.2 — a placed lantern records movement through ONE doorway of
-  // the placer's choosing
+  // v12.2 §5 — a placed lantern "watches one doorway of your choosing".
+  //
+  // NOTE the setup. `lantern_a` starts placed in the Shared Bedroom, so the
+  // actor must be THERE to pick it up. An earlier version of these two tests
+  // put the actor in the kitchen, where the pickup silently failed — which
+  // made the positive test fail outright and the negative one below pass for
+  // entirely the wrong reason. Carry the lantern to the room you mean to test.
   it('places a lantern watching a chosen door and emits the choice', () => {
-    const sim = simWithActorAt('kitchen');
-    applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
-    sim.state.actors[0]!.room = 'kitchen';
-    const r = applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_hearth_kitchen' });
+    const sim = simWithActorAt('shared_bedroom');
+    expect(applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' }).ok).toBe(true);
+    const r = applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_bed_hearth' });
     expect(r.ok).toBe(true);
     const placed = sim.state.lanterns[0]!.state;
-    expect(placed).toMatchObject({ kind: 'placed', room: 'kitchen', watching: 'd_hearth_kitchen', lit: true });
-    expect(sim.drain().some(e => e.kind === 'lantern.place' && e.watching === 'd_hearth_kitchen')).toBe(true);
+    expect(placed).toMatchObject({
+      kind: 'placed', room: 'shared_bedroom', watching: 'd_bed_hearth', lit: true,
+    });
+    expect(sim.drain().some(e => e.kind === 'lantern.place' && e.watching === 'd_bed_hearth')).toBe(true);
   });
 
   it('refuses to watch a door that is not an exit of the room', () => {
-    const sim = simWithActorAt('kitchen');
-    applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
-    sim.state.actors[0]!.room = 'kitchen';
-    expect(applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_attic_playroom' }).ok).toBe(false);
+    const sim = simWithActorAt('shared_bedroom');
+    expect(applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' }).ok).toBe(true);
+    const r = applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_attic_playroom' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/not an exit/i);
   });
 
   it('snuffing unlights a placed lantern and relighting restores it', () => {
