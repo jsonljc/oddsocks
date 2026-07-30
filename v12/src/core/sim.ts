@@ -160,6 +160,16 @@ export class Sim {
     return { ok: true };
   }
 
+  /** The only door into the event sink for action modules outside this file
+   *  (e.g. core/lantern.ts) — they get `house` and `state` read-only access
+   *  but the sink itself stays private to Sim. */
+  emitLantern(
+    kind: 'lantern.carry' | 'lantern.place' | 'lantern.snuff' | 'lantern.relight',
+    actor: ActorId, lantern: LanternId, room: RoomId, watching?: DoorId,
+  ): void {
+    this.sink.emit({ kind, tick: this.state.tick, night: this.state.night, actor, lantern, room, watching });
+  }
+
   toggleDoor(actorId: ActorId, doorId: DoorId): { ok: boolean; reason?: string } {
     const a = this.state.actors.find(x => x.id === actorId);
     if (!a?.alive) return { ok: false, reason: 'no such living actor' };
