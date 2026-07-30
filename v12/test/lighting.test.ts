@@ -47,6 +47,10 @@ describe('overlayAlphaFor', () => {
       // are silent if the AMBIENT FLOOR moves instead of the cap (e.g. a future
       // night-6 dark value lower than today's 0.06 — see core/light.ts's own
       // "worth watching" note on this exact knob). Pin the actual output too.
+      // 0.9 is derived from TODAY's tables (current worst case is 0.8648), not
+      // handed down by a rule — if a future night legitimately darkens further
+      // than this, raise the number here rather than reading a failure as a
+      // regression.
       expect(overlayAlphaFor(n, 'kitchen', allDark)).toBeLessThanOrEqual(0.9);
     }
     expect(MAX_OVERLAY).toBeLessThanOrEqual(0.95);

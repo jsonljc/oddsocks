@@ -58,8 +58,15 @@ export function ambientFor(night: number, room: RoomId, dark: ReadonlySet<RoomId
 }
 
 /** Light is room-scoped. v12.2 §5 says a placed lantern lights *its room*, and
- *  rooms are boxes, so a source never reaches past its own. That is also what
- *  makes the render-side mask cheap. */
+ *  rooms are boxes, so a source never reaches past its own — for THIS
+ *  function's level calculation (the `s.room !== room` skip below).
+ *
+ *  That is a mechanical guarantee only. The render layer does not currently
+ *  clip drawn light circles to room bounds anywhere — not here, not in
+ *  `render/lighting.ts` (see that file's `maskCirclesFor` docstring) — so a
+ *  source near a wall can visually paint into a room this function still
+ *  reports as fully dark. Not yet implemented; quantified (a 66px worst-case
+ *  bleed for a wall-hugging placed lantern) in the v12 slice-0 Task 9 report. */
 export function lightAt(
   night: number, room: RoomId, p: Vec2,
   sources: readonly LightSource[], dark: ReadonlySet<RoomId>,

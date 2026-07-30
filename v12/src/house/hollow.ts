@@ -2,6 +2,13 @@ import type { House } from '../core/house';
 
 const W = 260, H = 200, GAP = 40;
 
+/** `render/lighting.ts`'s `drawLighting` paints its darkness overlay per ROOM
+ *  bounds only, never across this gap (cross-referenced there too). Every
+ *  door's 60px span straddles it — 10px inside each room, 40px in the gap —
+ *  so GAP's width is currently most of what keeps a door legible in the dark,
+ *  not the overlay's alpha cap. Shrink GAP and that untouched strip shrinks
+ *  with it. */
+
 /** World rows 0–1 are the upper floor, 2–3 the ground floor. Stacking them so
  *  row 1 touches row 2 is what lets a stair sit on a shared edge and be walked
  *  through like any other door. */
