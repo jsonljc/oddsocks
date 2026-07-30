@@ -147,7 +147,7 @@ export class Sim {
 
   isHidden(id: ActorId): boolean {
     const a = this.state.actors.find(x => x.id === id);
-    return !!a && a.hiddenUntilTick > this.state.tick;
+    return !!a && a.alive && a.hiddenUntilTick > this.state.tick;
   }
 
   /** rules §9 — hide BRIEFLY behind furniture. Brief is the whole point: it

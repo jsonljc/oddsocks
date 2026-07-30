@@ -48,6 +48,7 @@ describe('toggleDoor', () => {
     expect(sim.state.closedDoors.has('d_hearth_kitchen')).toBe(false);
     const kinds = sim.drain().filter(e => e.kind === 'door.toggle');
     expect(kinds).toHaveLength(2);
+    expect(kinds.map(e => e.kind === 'door.toggle' && e.open)).toEqual([false, true]);
   });
 
   it('refuses a door that is not an exit of your room', () => {
@@ -58,18 +59,30 @@ describe('toggleDoor', () => {
 });
 
 describe('hiding', () => {
-  // rules §9 — hide BRIEFLY. It must expire on its own.
-  it('lasts HIDE_TICKS and then ends', () => {
+  // v12.2 §4 — hide BRIEFLY. Pin the duration, not just the fact that it ends.
+  it('lasts exactly HIDE_TICKS', () => {
     const sim = createSim(HOLLOW, 42, IDS);
     sim.beginHide('pike');
     expect(sim.isHidden('pike')).toBe(true);
-    for (let i = 0; i < HIDE_TICKS; i++) sim.step(new Map());
-    expect(sim.isHidden('pike')).toBe(false);
+    for (let i = 0; i < HIDE_TICKS - 1; i++) sim.step(new Map());
+    expect(sim.isHidden('pike'), 'should still be hidden one tick short').toBe(true);
+    sim.step(new Map());
+    expect(sim.isHidden('pike'), 'should be out of hiding on the last tick').toBe(false);
   });
 
   it('refuses to hide while carrying anything', () => {
     const sim = createSim(HOLLOW, 42, IDS);
     sim.state.actors.find(a => a.id === 'pike')!.carrying = 'lantern';
     expect(sim.beginHide('pike').ok).toBe(false);
+  });
+
+  // A taken actor keeps their hiddenUntilTick set, and nothing clears it on
+  // death — isHidden must not read that as still-hidden regardless.
+  it('never reports hidden for a dead actor, even before hiddenUntilTick elapses', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    sim.beginHide('pike');
+    expect(sim.isHidden('pike')).toBe(true);
+    sim.state.actors.find(a => a.id === 'pike')!.alive = false;
+    expect(sim.isHidden('pike')).toBe(false);
   });
 });
