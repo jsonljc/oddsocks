@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { createSim } from '../src/core/sim';
 import { createStalker } from '../src/scripted/stalker';
 import { HOLLOW } from '../src/house/hollow';
-import { TAKE_TICKS, WARN_AT_TICKS } from '../src/core/take';
+import { TAKE_TICKS, WARN_AT_TICKS, CONTACT_RADIUS } from '../src/core/take';
+import { dist } from '../src/core/geometry';
 
 // "type": "module" — no __dirname.
 const STALKER_SRC = fileURLToPath(new URL('../src/scripted/stalker.ts', import.meta.url));
@@ -158,5 +159,62 @@ describe('scripted stalker: the grab', () => {
       if (Math.hypot(input.moveX, input.moveY) > 0) sawMovement = true;
     }
     expect(sawMovement).toBe(true);
+  });
+
+  // Every test above uses a STATIONARY victim, so none of them can tell a
+  // walk-pace chase from a run-pace one: catching a victim who never moves
+  // doesn't depend on how fast the taker approaches. v12.2 §4's "the Odd
+  // Sock moves slower than you do... so running actually works" is a claim
+  // about relative SPEED, and nothing above pins it down.
+  //
+  // Flipping nextInput's chase branch from `run: false` to `run: true` is
+  // the mutation this guards against — and it is specifically the flag,
+  // not GRAB_SPEED_PENALTY's exact value, that is load-bearing: with
+  // `run: false`, WALK_SPEED * any legal penalty (< 1) is always below
+  // WALK_SPEED itself, so "the grabber is always slower than even a
+  // walking target" holds for every value that constant could reasonably
+  // take — tuning the penalty changes escape TIMING but can never invert
+  // the rule while run stays false. `run: true` changes that: RUN_SPEED *
+  // GRAB_SPEED_PENALTY crosses WALK_SPEED at a penalty of ~0.579, barely
+  // above the shipped 0.55 — which is what makes the flag itself the
+  // thing worth pinning down here, not the constant.
+  //
+  // Attic has no door on its west wall (only east to playroom, north to
+  // nursery, south/stairs to shared_bedroom — see house/hollow.ts), so
+  // fleeing due west can only ever be stopped by the room's own edge, never
+  // by an accidental room change; escape here is pure distance.
+  //
+  // Measured empirically (values are end-of-tick, read after
+  // tickBehaviour within the same loop iteration — the same sampling point
+  // used throughout this file): against the real (walking-pace) chase,
+  // contact breaks by tick 9 (dist 42.9; already clear by tick 10).
+  // Against a run-pace mutant (chase at `run: true`), contact is still
+  // within CONTACT_RADIUS at tick 10 (dist 32.8), breaking only at tick 13.
+  // Tick 11 sits comfortably past the real break and comfortably before
+  // the mutant's, so it's what this test checks.
+  it('lets a fleeing victim outrun the chase, not just the grab', () => {
+    const sim = pairInDarkRoom();
+    const stalker = createStalker(HOLLOW, 'wren', 7);
+    const pike = sim.state.actors.find(a => a.id === 'pike')!;
+    const wren = sim.state.actors.find(a => a.id === 'wren')!;
+    const flee = new Map([['pike', { moveX: -1, moveY: 0, run: true }]]);
+
+    for (let t = 0; t < 11; t++) {
+      const wrenInput = stalker.nextInput(sim);
+      sim.step(new Map([['wren', wrenInput], ...flee]));
+      stalker.tickBehaviour(sim);
+    }
+    expect(dist(wren.at, pike.at)).toBeGreaterThan(CONTACT_RADIUS);
+    expect(wren.grabbing).toBe(false);
+
+    // Keep running well past TAKE_TICKS: the escape has to hold, not just
+    // delay the inevitable.
+    for (let t = 0; t < TAKE_TICKS; t++) {
+      const wrenInput = stalker.nextInput(sim);
+      sim.step(new Map([['wren', wrenInput], ...flee]));
+      stalker.tickBehaviour(sim);
+    }
+    expect(pike.alive).toBe(true);
+    expect(sim.drain().filter(e => e.kind === 'take.complete')).toHaveLength(0);
   });
 });

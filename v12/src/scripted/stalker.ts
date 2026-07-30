@@ -40,18 +40,29 @@ export function createStalker(house: House, id: ActorId, seed: number): Stalker 
       // immediately abandoned: the patrol logic below steers toward its own
       // next door regardless of any live attempt, dragging the taker out of
       // CONTACT_RADIUS in well under 20 ticks (measured empirically against
-      // a stationary, adjacent victim — contact broke at tick 19), 70-odd
-      // short of the 90 a Take needs, so a grab could never complete. While
-      // an attempt is live, steer toward ITS victim instead of the route.
-      // Walking pace only, never run: 0.55x of RUN_SPEED is 104.5 px/s,
-      // still under a merely-walking victim's 110 px/s, but by a 5.5 px/s
-      // margin a future speed tune could invert; walking pace (60.5 px/s)
-      // keeps "the grabber is always slower" true with headroom. The route
-      // is left untouched on purpose: canTake requires taker and victim to
-      // share a room, so this steers to a point inside the room the stalker
-      // is already in and never crosses a door — `route` itself is never
-      // mutated by a chase (which patrol path resumes afterward isn't
-      // asserted by a test, only that patrolling resumes at all).
+      // a stationary, adjacent victim; the exact tick is sensitive to
+      // whether you sample before or after tickBehaviour within the same
+      // step), 70-odd short of the 90 a Take needs, so a grab could never
+      // complete. While an attempt is live, steer toward ITS victim instead
+      // of the route. Walking pace only, never run: 0.55x of RUN_SPEED is
+      // 104.5 px/s, still under a merely-walking victim's 110 px/s, but by
+      // a 5.5 px/s margin a future speed tune could invert; walking pace
+      // (60.5 px/s) keeps "the grabber is always slower" true with
+      // headroom — test/stalker.test.ts's "lets a fleeing victim outrun the
+      // chase" pins this margin down: a run-pace chase (the mutation this
+      // guards against) is measurably slower to break contact than a
+      // walking one. The route is left untouched on purpose: canTake
+      // requires taker and victim to share a room, so this steers to a
+      // point inside the room the stalker is already in. In every fixture
+      // here the victim starts at room centre, far enough from any doorway
+      // that the chase never actually reaches one, though nothing in this
+      // branch stops it structurally — a victim standing right at a
+      // doorway could in principle pull the taker across one. If that ever
+      // happened canTake's same-room check would break the attempt on the
+      // very next tick regardless, so it is harmless either way; `route`
+      // itself is never mutated by a chase, and which patrol path resumes
+      // afterward (the same route, or the `!door` reset) isn't asserted by
+      // a test.
       if (attempt) {
         const victimId = attempt.victim;
         const victim = sim.state.actors.find(a => a.id === victimId);
