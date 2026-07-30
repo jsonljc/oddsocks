@@ -2100,7 +2100,7 @@ git commit -m "feat(v12): lanterns, and §10.2's one watched doorway"
 **Interfaces:**
 - Consumes: `Sim`, `Actor`; `lightAt`, `DARK_ENOUGH_FOR_TAKE`, `LANTERN_RADIUS` from `core/light`; `dist` from `core/geometry`
 - Produces:
-  - `const CONTACT_RADIUS = 40`, `const INTERVENE_RADIUS = 200`, `const TAKE_TICKS = 45` (1.5 s), `const WARN_AT_TICKS = 15`
+  - `const CONTACT_RADIUS = 40`, `const INTERVENE_RADIUS = 200`, `const TAKE_TICKS = 90` (3 s, per v12.2 §7's "about three seconds of contact"), `const WARN_AT_TICKS = 30` (1 s of warning)
   - `type TakeBlock = 'too-lit' | 'lantern-protected' | 'witness' | 'out-of-contact' | 'night-one' | 'carrying'`
   - `canTake(sim: Sim, taker: ActorId, victim: ActorId): { ok: true } | { ok: false; reason: TakeBlock }`
   - `class TakeAttempt { tick(sim: Sim): 'warned' | 'progressing' | 'broken' | 'complete' }`
