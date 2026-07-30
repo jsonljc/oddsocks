@@ -1,4 +1,4 @@
-import { makeSink, type ActorId, type EventSink, type LanternId, type MatchEvent } from './events';
+import { makeSink, type ActorId, type EventSink, type LanternId, type MatchEvent, type SoundKind } from './events';
 import type { Vec2 } from './geometry';
 import { exitsOf, roomById, type DoorId, type House, type RoomId } from './house';
 import { CARRIED_LANTERN_RADIUS, LANTERN_RADIUS, darkRoomsFor, type LightSource } from './light';
@@ -11,6 +11,11 @@ export const DT = 1 / TICK_HZ;
 export const WALK_SPEED = 110;      // px/s
 export const RUN_SPEED = 190;
 export const CARRY_SLOWDOWN = 0.8;  // rules §10.1 — carrying a lantern is slower
+
+/** v12.2 §4 — the grabber moves slower than their target for the whole attempt.
+ *  This is what makes the warning window mean something: a target with somewhere
+ *  to run can outpace a grab in progress. */
+export const GRAB_SPEED_PENALTY = 0.55;
 
 // rules §9/§20 — a moving player emits a footstep on this cadence. Running is
 // faster and therefore louder in frequency, which is how a listener tells
@@ -28,6 +33,7 @@ export interface Actor {
   carrying: 'none' | 'lantern' | 'sock';
   stepCooldown: number;
   hiddenUntilTick: number; // 0 when not hiding
+  grabbing: boolean; // v12.2 §4 — true while this actor is mid-Take as the taker
 }
 
 export type LanternState =
@@ -61,7 +67,7 @@ export class Sim {
         const b = roomById(this.house, room).bounds;
         return {
           id, room, alive: true, carrying: 'none' as const, stepCooldown: 0,
-          hiddenUntilTick: 0,
+          hiddenUntilTick: 0, grabbing: false,
           at: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
         };
       }),
@@ -90,6 +96,7 @@ export class Sim {
       if (len === 0) continue;
       let speed = input.run ? RUN_SPEED : WALK_SPEED;
       if (actor.carrying === 'lantern') speed *= CARRY_SLOWDOWN;
+      if (actor.grabbing) speed *= GRAB_SPEED_PENALTY;
 
       const delta = {
         x: (input.moveX / len) * speed * DT,
@@ -160,14 +167,34 @@ export class Sim {
     return { ok: true };
   }
 
+  /** v12.2 §4 — on while a Take attempt is holding this actor as the taker.
+   *  core/take.ts flips this every tick of an attempt (true while it stands,
+   *  false the instant it breaks or completes) so the speed penalty in `step`
+   *  never outlives the attempt that earned it. */
+  setGrabbing(id: ActorId, on: boolean): void {
+    const a = this.state.actors.find(x => x.id === id);
+    if (a) a.grabbing = on;
+  }
+
   /** The only door into the event sink for action modules outside this file
-   *  (e.g. core/lantern.ts) — they get `house` and `state` read-only access
-   *  but the sink itself stays private to Sim. */
+   *  (e.g. core/lantern.ts, core/take.ts) — they get `house` and `state`
+   *  read-only access but the sink itself stays private to Sim. */
   emitLantern(
     kind: 'lantern.carry' | 'lantern.place' | 'lantern.snuff' | 'lantern.relight',
     actor: ActorId, lantern: LanternId, room: RoomId, watching?: DoorId,
   ): void {
     this.sink.emit({ kind, tick: this.state.tick, night: this.state.night, actor, lantern, room, watching });
+  }
+
+  emitTake(kind: 'take.warn' | 'take.complete', actor: ActorId, victim: ActorId, room: RoomId): void {
+    this.sink.emit({ kind, tick: this.state.tick, night: this.state.night, actor, victim, room });
+  }
+
+  emitSound(sound: SoundKind, room: RoomId): void {
+    this.sink.emit({
+      kind: 'sound', tick: this.state.tick, night: this.state.night,
+      floor: roomById(this.house, room).floor, sound, room,
+    });
   }
 
   toggleDoor(actorId: ActorId, doorId: DoorId): { ok: boolean; reason?: string } {
