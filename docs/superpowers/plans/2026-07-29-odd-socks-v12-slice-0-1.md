@@ -1771,6 +1771,9 @@ describe('toggleDoor', () => {
     expect(sim.state.closedDoors.has('d_hearth_kitchen')).toBe(false);
     const kinds = sim.drain().filter(e => e.kind === 'door.toggle');
     expect(kinds).toHaveLength(2);
+    // Check the payload, not just the count — a hardcoded or inverted `open`
+    // would otherwise ship silently.
+    expect(kinds.map(e => e.kind === 'door.toggle' && e.open)).toEqual([false, true]);
   });
 
   it('refuses a door that is not an exit of your room', () => {
@@ -1781,13 +1784,18 @@ describe('toggleDoor', () => {
 });
 
 describe('hiding', () => {
-  // rules §9 — hide BRIEFLY. It must expire on its own.
-  it('lasts HIDE_TICKS and then ends', () => {
+  // v12.2 §4 — hide BRIEFLY. Pin the duration, not just the fact that it ends:
+  // asserting only "true now, false after HIDE_TICKS" passes unchanged if the
+  // duration is silently changed to 1 tick, and the duration is the one numeric
+  // guarantee this task introduces.
+  it('lasts exactly HIDE_TICKS', () => {
     const sim = createSim(HOLLOW, 42, IDS);
     sim.beginHide('pike');
     expect(sim.isHidden('pike')).toBe(true);
-    for (let i = 0; i < HIDE_TICKS; i++) sim.step(new Map());
-    expect(sim.isHidden('pike')).toBe(false);
+    for (let i = 0; i < HIDE_TICKS - 1; i++) sim.step(new Map());
+    expect(sim.isHidden('pike'), 'should still be hidden one tick short').toBe(true);
+    sim.step(new Map());
+    expect(sim.isHidden('pike'), 'should be out of hiding on the last tick').toBe(false);
   });
 
   it('refuses to hide while carrying anything', () => {
