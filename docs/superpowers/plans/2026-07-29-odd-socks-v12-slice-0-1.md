@@ -2115,6 +2115,7 @@ import { createSim } from '../src/core/sim';
 import { applyLanternAction } from '../src/core/lantern';
 import { canTake, beginTake, TAKE_TICKS, WARN_AT_TICKS } from '../src/core/take';
 import { dist } from '../src/core/geometry';
+import { exitsOf } from '../src/core/house';
 import { HOLLOW } from '../src/house/hollow';
 
 const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
@@ -2275,6 +2276,34 @@ describe('TakeAttempt', () => {
     expect(after).toBeGreaterThan(before);
   });
 
+  // v12.2 §4 — "Reaching lantern light saves you." Saves, not delays. This is
+  // the test that proves escaping is not merely a pause.
+  it('stays broken once broken, even if the interruption goes away', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    for (let i = 0; i < TAKE_TICKS - 1; i++) attempt.tick(sim);
+
+    const victim = sim.state.actors.find(a => a.id === 'pike')!;
+    const lantern = sim.state.lanterns[0]!;
+    lantern.state = {
+      kind: 'placed', room: victim.room, at: { ...victim.at },
+      watching: exitsOf(HOLLOW, victim.room)[0]!.id, lit: true,
+    };
+    expect(attempt.tick(sim)).toBe('broken');
+
+    // The light goes out again. The grab must NOT pick up where it left off.
+    (lantern.state as { lit: boolean }).lit = false;
+    expect(attempt.tick(sim)).toBe('broken');
+    expect(victim.alive).toBe(true);
+
+    // A fresh attempt has to serve the full duration over again.
+    const second = beginTake('wren', 'pike');
+    for (let i = 0; i < TAKE_TICKS - 1; i++) {
+      expect(second.tick(sim)).not.toBe('complete');
+    }
+    expect(second.tick(sim)).toBe('complete');
+  });
+
   it('clears the penalty when the attempt breaks', () => {
     const sim = pairInDarkRoom();
     const attempt = beginTake('wren', 'pike');
@@ -2369,12 +2398,30 @@ export type TakeTick = 'warned' | 'progressing' | 'broken' | 'complete';
 export class TakeAttempt {
   private elapsed = 0;
   private done = false;
+  private broken = false;
   constructor(readonly taker: ActorId, readonly victim: ActorId) {}
 
   tick(sim: Sim): TakeTick {
     if (this.done) return 'complete';
+
+    // v12.2 §4 — "Reaching lantern light SAVES you. So does someone else
+    // walking in." Once broken, an attempt is dead and stays dead; the taker
+    // must call beginTake() again and start the three seconds over.
+    //
+    // Without this latch the escape only PAUSES the grab: `elapsed` survives,
+    // so a victim who reaches light on tick 89 and loses it again is taken on
+    // the very next tick of contact — one tick instead of ninety. Escaping
+    // would leave you worse off than never having been noticed, which inverts
+    // the rule. Measured before this latch existed: baseline completed on tick
+    // 90; escape-then-return completed on the tick after the escape.
+    if (this.broken) return 'broken';
+
     const check = canTake(sim, this.taker, this.victim);
-    if (!check.ok) { sim.setGrabbing(this.taker, false); return 'broken'; }
+    if (!check.ok) {
+      this.broken = true;
+      sim.setGrabbing(this.taker, false);
+      return 'broken';
+    }
 
     // v12.2 §4 — "While the Odd Sock is grabbing you, they move slower than you
     // do. So running actually works." The penalty must be live for the whole
