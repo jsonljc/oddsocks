@@ -9,7 +9,25 @@
 **Tech Stack:** TypeScript 5.6 (strict), Vite 6, PixiJS 8, Vitest 2, Node 20+.
 
 **Spec:** `docs/superpowers/specs/2026-07-29-odd-socks-v12-prototype-design.md`
-**Rules:** `docs/rules-v12.0.md` (verbatim, authoritative)
+**Rules:** `docs/rules-v12.2.md` — **authoritative.**
+
+> ## ⚠️ Rules changed mid-execution, 2026-07-30. Read this before any task.
+>
+> Tasks 1 and 2 were built against **v12.0**, which is superseded twice over: by `rules-v12.1.md`
+> (a full rewrite — 16 sections, not 32, entirely different numbering) and then by
+> `rules-v12.2.md` (v12.1 plus three measured corrections). **Every `§` reference in this plan
+> below this notice that is not marked `v12.2 §` is a v12.0 reference and may be stale.** The
+> tasks that needed changing have been revised in place and say so.
+>
+> What this cost: **Task 2's house is superseded.** It built a 10-room ring with two exits
+> everywhere, which is precisely the defect v12.1 §15 names — *"'No more than two doors' secretly
+> meant the whole house was a straight line or a loop, with no branching anywhere."* **Task 2R
+> replaces it.** `geometry.ts` and `house.ts` from Task 2 survive unchanged; only the house data
+> and the exit ceiling move.
+>
+> **§14's crowd rule is known broken and parked** — the economy pass measured it as a *villain*
+> ability. Nothing in slices 0–1 depends on it: slice 0 has no flames, and slice 1 reads them from
+> a hand-authored log. Do not implement a flame cost for crowding. Do render the report line.
 
 ## Global Constraints
 
@@ -17,7 +35,8 @@ Every task's requirements implicitly include this section.
 
 - **Determinism is required from the first tick.** Fixed timestep of exactly `1/30` s. No `Math.random()`, no `Date.now()`, no wall-clock reads anywhere in `core/` or `log/`. Same seed plus same input sequence must produce a byte-identical event stream. Retrofitting this is expensive and slice 2b's server depends on it.
 - **Layer boundary.** `core/` and `log/` must not import from `render/`, `audio/`, `app/` or `scripted/`. Enforced by a test, not by review. `core/ ↔ log/` is permitted.
-- **No room has more than two exits**, counting doorways and stairs (rules §6.1). A hard constraint — §16.3's Bind requires sealing every exit.
+- **No room has more than three doors**, counting doorways and stairs (**v12.2 §3**). Inverted from v12.0's two-exit rule, which forced the whole house into a line or a loop and deleted the point of hidden movement. The Bind now constrains itself instead: **v12.2 §11** allows it *"only in a room with exactly two doors"* — so the house must always contain one, including after rooms start sealing on Night Four (**v12.2 §13**). `validateHouse` owns that invariant.
+- **A sock created mid-night must be findable and deliverable inside the same ninety seconds** (**v12.2 §6**, retrieval latency pinned to zero). No sock mechanics exist in slices 0–1, but nothing built here may make same-night delivery impossible — it is the difference between 0 and 227 villain lines that deny the children an accusation.
 - **`houseReport` must be structurally unable to see player identities**, except the one field rules §13.1 grants it: which children did not return. Enforced by the projection's type, not by discipline.
 - **The scripted stalker never produces a number.** No metrics, no counters, no win-rate API. It is set dressing for solo feel-testing (spec §9.1).
 - **No economy simulator** for rules §32 Q2/Q3/Q4 (spec §9.2). Out of scope entirely.
@@ -270,6 +289,18 @@ git commit -m "feat(v12): scaffold the client and pin determinism at the RNG"
 ---
 
 ## Task 2: Geometry, the house, and the two structural guards
+
+> ### ⛔ PARTLY SUPERSEDED — build Task 2R instead of this task's Steps 2, 5 (house data) and 6
+>
+> **Done and kept:** `src/core/geometry.ts`, `src/core/house.ts`'s lookups, and
+> `test/boundaries.test.ts`. Those stand and need no rework.
+>
+> **Superseded:** the `HOLLOW` data below and the two-exit ceiling. It was built against v12.0.
+> v12.1 §15 names that ceiling as a defect, and this task's own test caught a second problem in
+> the data as originally written (`library` and `playroom` had three exits each). **The door
+> IDs in the code block below no longer exist.** Do not copy them.
+>
+> Read **Task 2R** for the house that ships.
 
 **Files:**
 - Create: `v12/src/core/geometry.ts`, `v12/src/core/house.ts`, `v12/src/house/hollow.ts`
@@ -535,13 +566,13 @@ export const HOLLOW: House = {
   ],
   doors: [
     { id: 'd_bed_hearth',  a: 'shared_bedroom', b: 'hearth',      at: { x: 1 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
-    { id: 'd_hearth_kit',  a: 'hearth',         b: 'kitchen',     at: { x: 2 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
-    { id: 'd_kit_lib',     a: 'kitchen',        b: 'library',     at: { x: 3 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
-    { id: 'd_lib_cellar',  a: 'library',        b: 'cellar',      at: { x: 4 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
-    { id: 'd_nur_music',   a: 'nursery',        b: 'music_room',  at: { x: 1 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
-    { id: 'd_music_play',  a: 'music_room',     b: 'playroom',    at: { x: 2 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_hearth_kitchen',  a: 'hearth',         b: 'kitchen',     at: { x: 2 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_hearth_kitchen',     a: 'kitchen',        b: 'library',     at: { x: 3 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_cellar_library',  a: 'library',        b: 'cellar',      at: { x: 4 * (W + GAP) - GAP / 2, y: 1 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_nursery_music',   a: 'nursery',        b: 'music_room',  at: { x: 1 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_music_playroom',  a: 'music_room',     b: 'playroom',    at: { x: 2 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
     { id: 'd_play_bath',   a: 'playroom',       b: 'bathroom',    at: { x: 3 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
-    { id: 'd_bath_attic',  a: 'bathroom',       b: 'attic',       at: { x: 4 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
+    { id: 'd_attic_playroom',  a: 'bathroom',       b: 'attic',       at: { x: 4 * (W + GAP) - GAP / 2, y: 0 * (H + GAP) + H / 2 }, span: 60, kind: 'doorway' },
     { id: 's_lib_play',    a: 'library',        b: 'playroom',    at: { x: 3 * (W + GAP) + W / 2,   y: 1 * (H + GAP) - GAP / 2 }, span: 60, kind: 'stair' },
     { id: 's_cellar_attic',a: 'cellar',         b: 'attic',       at: { x: 4 * (W + GAP) + W / 2,   y: 1 * (H + GAP) - GAP / 2 }, span: 60, kind: 'stair' },
   ],
@@ -560,6 +591,360 @@ Expected: PASS. If the exit-count test fails, the house data is wrong — fix th
 ```bash
 git add v12/
 git commit -m "feat(v12): the house, with §6.1's two-exit rule enforced by test"
+```
+
+---
+
+## Task 2R: Rebuild the house for v12.2
+
+**Supersedes Task 2's house data and exit ceiling.** `src/core/geometry.ts` and `src/core/house.ts`'s
+lookups from Task 2 survive unchanged — only `validateHouse`'s rules and `src/house/hollow.ts` move.
+
+Task 2 built a 10-room ring with two doors everywhere. v12.1 §15 names that as a defect: *"'No more
+than two doors' secretly meant the whole house was a straight line or a loop, with no branching
+anywhere. That deletes the point of hidden movement."*
+
+**Files:**
+- Modify: `v12/src/core/house.ts` (House type gains `sealOrder`; `validateHouse` rewritten)
+- Replace: `v12/src/house/hollow.ts`
+- Modify: `v12/test/house.test.ts`
+
+**Interfaces:**
+- Consumes: `Rect`, `Vec2` from `core/geometry`
+- Produces (changed): `interface House { rooms: Room[]; doors: Door[]; sealOrder: RoomId[] }`,
+  `MAX_DOORS = 3`, `BIND_DOORS = 2`, `doorCount(h, id): number`, `bindEligible(h): Room[]`,
+  `houseAfterSealing(h, count): House`, `validateHouse(h): string[]`
+- Unchanged: `roomById`, `exitsOf`, `otherSide`, `Room`, `Door`
+
+### The four invariants `validateHouse` must own
+
+The third and fourth are new and are the reason this task exists as more than a data swap.
+
+1. **No room exceeds three doors** (v12.2 §3).
+2. **No room has zero doors**, and the house is connected.
+3. **At least one two-door room exists** — v12.2 §11 allows the Bind *"only in a room with exactly
+   two doors."* A house with none is unwinnable for the children.
+4. **Invariant 3 survives sealing.** v12.2 §13 starts closing peripheral rooms on **Night Four**,
+   not just during the Last Night. So after each room in `sealOrder` closes, there must still be a
+   two-door room, still no zero-door room, still a connected house, and the Hearth must never be in
+   `sealOrder` (v12.2 §11: *"the fireplace room never seals"*).
+
+- [ ] **Step 1: Write the failing test**
+
+Replace `v12/test/house.test.ts` entirely:
+
+```ts
+import {
+  validateHouse, exitsOf, roomById, doorCount, bindEligible,
+  houseAfterSealing, MAX_DOORS, BIND_DOORS,
+} from '../src/core/house';
+import { HOLLOW } from '../src/house/hollow';
+
+describe('HOLLOW shape', () => {
+  // v12.2 §3 — ten rooms, plus the bedroom you start in and the fireplace room
+  it('has twelve rooms: ten plus the Shared Bedroom and the Hearth', () => {
+    expect(HOLLOW.rooms).toHaveLength(12);
+    const ids = HOLLOW.rooms.map(r => r.id);
+    expect(ids).toContain('shared_bedroom');
+    expect(ids).toContain('hearth');
+  });
+
+  it('spans exactly two floors, six rooms each', () => {
+    expect(HOLLOW.rooms.filter(r => r.floor === 0)).toHaveLength(6);
+    expect(HOLLOW.rooms.filter(r => r.floor === 1)).toHaveLength(6);
+  });
+
+  it('joins the floors with stairs', () => {
+    expect(HOLLOW.doors.filter(d => d.kind === 'stair').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('v12.2 §3 — the door ceiling', () => {
+  it('gives no room more than three doors', () => {
+    for (const room of HOLLOW.rooms) {
+      expect(doorCount(HOLLOW, room.id), room.id).toBeLessThanOrEqual(MAX_DOORS);
+    }
+  });
+
+  it('gives every room at least one door', () => {
+    for (const room of HOLLOW.rooms) {
+      expect(doorCount(HOLLOW, room.id), room.id).toBeGreaterThan(0);
+    }
+  });
+
+  // This is the whole reason the ceiling moved from two to three. A house where
+  // every room has two doors is a line or a loop, and hidden movement is pointless.
+  it('actually branches — at least three rooms have three doors', () => {
+    const hubs = HOLLOW.rooms.filter(r => doorCount(HOLLOW, r.id) === 3);
+    expect(hubs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('is not a single cycle — it has more doors than a ring of twelve would', () => {
+    expect(HOLLOW.doors.length).toBeGreaterThan(HOLLOW.rooms.length);
+  });
+});
+
+describe('v12.2 §11 — the Bind needs a two-door room', () => {
+  it('has at least one', () => {
+    expect(bindEligible(HOLLOW).length).toBeGreaterThan(0);
+    for (const r of bindEligible(HOLLOW)) expect(doorCount(HOLLOW, r.id)).toBe(BIND_DOORS);
+  });
+
+  // v12.2 §13 seals peripheral rooms from Night Four. The children's only win
+  // condition must not be sealed away by the house itself.
+  it('still has one after every scheduled sealing', () => {
+    for (let n = 0; n <= HOLLOW.sealOrder.length; n++) {
+      expect(bindEligible(houseAfterSealing(HOLLOW, n)).length, `after ${n} seals`)
+        .toBeGreaterThan(0);
+    }
+  });
+
+  it('never seals the Hearth', () => {
+    expect(HOLLOW.sealOrder).not.toContain('hearth');
+  });
+
+  it('leaves no room doorless and the house connected after every sealing', () => {
+    for (let n = 0; n <= HOLLOW.sealOrder.length; n++) {
+      const h = houseAfterSealing(HOLLOW, n);
+      for (const room of h.rooms) {
+        expect(doorCount(h, room.id), `${room.id} after ${n} seals`).toBeGreaterThan(0);
+      }
+      const seen = new Set([h.rooms[0]!.id]);
+      const queue = [h.rooms[0]!.id];
+      while (queue.length) {
+        const id = queue.shift()!;
+        for (const d of exitsOf(h, id)) {
+          const other = d.a === id ? d.b : d.a;
+          if (!seen.has(other)) { seen.add(other); queue.push(other); }
+        }
+      }
+      expect(seen.size, `connected after ${n} seals`).toBe(h.rooms.length);
+    }
+  });
+});
+
+describe('validateHouse', () => {
+  it('passes HOLLOW clean', () => {
+    expect(validateHouse(HOLLOW)).toEqual([]);
+  });
+
+  it('rejects a fourth door on a room', () => {
+    const broken = { ...HOLLOW, doors: [...HOLLOW.doors,
+      { id: 'x1', a: 'nursery', b: 'cellar', at: { x: 0, y: 0 }, span: 20, kind: 'doorway' as const },
+      { id: 'x2', a: 'nursery', b: 'library', at: { x: 0, y: 0 }, span: 20, kind: 'doorway' as const }] };
+    expect(validateHouse(broken).join(' ')).toMatch(/nursery.*doors/i);
+  });
+
+  it('rejects a house with no two-door room', () => {
+    const ring = {
+      rooms: HOLLOW.rooms.slice(0, 3),
+      doors: [
+        { id: 'a', a: 'shared_bedroom', b: 'hearth', at: { x: 0, y: 0 }, span: 20, kind: 'doorway' as const },
+        { id: 'b', a: 'hearth', b: 'kitchen', at: { x: 0, y: 0 }, span: 20, kind: 'doorway' as const },
+      ],
+      sealOrder: [],
+    };
+    // bedroom=1, hearth=2, kitchen=1 -> hearth IS two-door, so this one passes that check.
+    // Strip the hearth's second door to remove every two-door room:
+    const noBind = { ...ring, doors: [ring.doors[0]!] };
+    expect(validateHouse(noBind).join(' ')).toMatch(/two-door|Bind/i);
+  });
+
+  it('rejects sealing the Hearth', () => {
+    expect(validateHouse({ ...HOLLOW, sealOrder: ['hearth'] }).join(' ')).toMatch(/hearth/i);
+  });
+
+  it('rejects a seal schedule that strands a room', () => {
+    // Sealing every neighbour of the Attic would leave it doorless.
+    const attic = exitsOf(HOLLOW, 'attic').map(d => (d.a === 'attic' ? d.b : d.a));
+    expect(validateHouse({ ...HOLLOW, sealOrder: attic }).join(' ')).toMatch(/no doors|doorless/i);
+  });
+
+  it('roomById throws on an unknown id rather than returning undefined', () => {
+    expect(() => roomById(HOLLOW, 'no_such_room')).toThrow();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd v12 && npx vitest run test/house.test.ts`
+Expected: FAIL — `doorCount`, `bindEligible`, `houseAfterSealing`, `MAX_DOORS`, `BIND_DOORS` and `sealOrder` do not exist, and `HOLLOW` has ten rooms.
+
+- [ ] **Step 3: Rewrite the house rules**
+
+In `v12/src/core/house.ts`, add `sealOrder: RoomId[]` to `House`, and replace `validateHouse` with:
+
+```ts
+/** v12.2 §3 — a room may have up to three doors. v12.0's two-door ceiling forced
+ *  the whole house into a line or a loop, which deletes the point of hidden
+ *  movement (v12.1 §15). */
+export const MAX_DOORS = 3;
+
+/** v12.2 §11 — the Bind works "only in a room with exactly two doors". */
+export const BIND_DOORS = 2;
+
+export function doorCount(h: House, id: RoomId): number {
+  return exitsOf(h, id).length;
+}
+
+export function bindEligible(h: House): Room[] {
+  return h.rooms.filter(r => doorCount(h, r.id) === BIND_DOORS);
+}
+
+/** v12.2 §13 — peripheral rooms start closing on Night Four. Returns the house
+ *  as it stands after the first `count` entries of `sealOrder` have closed. */
+export function houseAfterSealing(h: House, count: number): House {
+  const sealed = new Set(h.sealOrder.slice(0, count));
+  return {
+    rooms: h.rooms.filter(r => !sealed.has(r.id)),
+    doors: h.doors.filter(d => !sealed.has(d.a) && !sealed.has(d.b)),
+    sealOrder: h.sealOrder.slice(count),
+  };
+}
+
+function connected(h: House): boolean {
+  const first = h.rooms[0];
+  if (!first) return true;
+  const seen = new Set([first.id]);
+  const queue = [first.id];
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const d of exitsOf(h, id)) {
+      const other = otherSide(d, id);
+      if (!seen.has(other)) { seen.add(other); queue.push(other); }
+    }
+  }
+  return seen.size === h.rooms.length;
+}
+
+export function validateHouse(h: House): string[] {
+  const problems: string[] = [];
+
+  for (const d of h.doors) {
+    if (!h.rooms.some(r => r.id === d.a)) problems.push(`door ${d.id} references unknown room ${d.a}`);
+    if (!h.rooms.some(r => r.id === d.b)) problems.push(`door ${d.id} references unknown room ${d.b}`);
+  }
+  if (h.sealOrder.includes('hearth')) {
+    problems.push('sealOrder contains hearth — the fireplace room never seals (v12.2 §11)');
+  }
+  for (const id of h.sealOrder) {
+    if (!h.rooms.some(r => r.id === id)) problems.push(`sealOrder references unknown room ${id}`);
+  }
+
+  // Check the ceiling, the floor, connectivity and Bind-eligibility at every
+  // stage of the collapse — not just at the start. A house that is legal on
+  // Night One and unwinnable on Night Six is the failure this guards.
+  for (let n = 0; n <= h.sealOrder.length; n++) {
+    const stage = houseAfterSealing(h, n);
+    const when = n === 0 ? 'as built' : `after ${n} seal(s)`;
+    for (const room of stage.rooms) {
+      const count = doorCount(stage, room.id);
+      if (count > MAX_DOORS) {
+        problems.push(`room ${room.id} has ${count} doors ${when}, maximum is ${MAX_DOORS} (v12.2 §3)`);
+      }
+      if (count === 0) problems.push(`room ${room.id} has no doors ${when}`);
+    }
+    if (bindEligible(stage).length === 0) {
+      problems.push(`no two-door room ${when} — the Bind would be impossible (v12.2 §11)`);
+    }
+    if (!connected(stage)) problems.push(`house is not connected ${when}`);
+  }
+
+  return problems;
+}
+```
+
+- [ ] **Step 4: Replace the house**
+
+Replace `v12/src/house/hollow.ts` entirely. Two 3×2 grids stacked so the floors touch, which is what lets a stair sit on a shared edge like any other door:
+
+```ts
+import type { House } from '../core/house';
+
+const W = 260, H = 200, GAP = 40;
+
+/** World rows 0–1 are the upper floor, 2–3 the ground floor. Stacking them so
+ *  row 1 touches row 2 is what lets a stair sit on a shared edge and be walked
+ *  through like any other door. */
+const cell = (col: number, worldRow: number) =>
+  ({ x: col * (W + GAP), y: worldRow * (H + GAP), w: W, h: H });
+
+/** Door on the vertical edge between (col-1,row) and (col,row). */
+const vEdge = (col: number, worldRow: number) =>
+  ({ x: col * (W + GAP) - GAP / 2, y: worldRow * (H + GAP) + H / 2 });
+
+/** Door on the horizontal edge between (col,row-1) and (col,row). */
+const hEdge = (col: number, worldRow: number) =>
+  ({ x: col * (W + GAP) + W / 2, y: worldRow * (H + GAP) - GAP / 2 });
+
+/**
+ *  Upper floor        Ground floor
+ *  nursery music bath shared_bedroom hearth kitchen
+ *  attic  play  study cellar        library conservatory
+ *
+ *  Branching, not a ring: hearth, library, playroom, music_room and the two
+ *  stair-heads are three-door hubs, while nursery, bathroom, cellar and
+ *  conservatory stay two-door and Bind-eligible.
+ */
+export const HOLLOW: House = {
+  rooms: [
+    { id: 'nursery',       name: 'Nursery',      floor: 1, bounds: cell(0, 0), centralObject: 'a rocking horse' },
+    { id: 'music_room',    name: 'Music Room',   floor: 1, bounds: cell(1, 0), centralObject: 'an upright piano' },
+    { id: 'bathroom',      name: 'Bathroom',     floor: 1, bounds: cell(2, 0), centralObject: 'a claw-foot bath' },
+    { id: 'attic',         name: 'Attic',        floor: 1, bounds: cell(0, 1), centralObject: 'a dust-sheeted mirror' },
+    { id: 'playroom',      name: 'Playroom',     floor: 1, bounds: cell(1, 1), centralObject: 'a toy chest' },
+    { id: 'study',         name: 'Study',        floor: 1, bounds: cell(2, 1), centralObject: 'a writing desk' },
+    { id: 'shared_bedroom',name: 'Shared Bedroom',floor: 0, bounds: cell(0, 2), centralObject: 'six beds' },
+    { id: 'hearth',        name: 'Hearth Room',  floor: 0, bounds: cell(1, 2), centralObject: 'the five flames' },
+    { id: 'kitchen',       name: 'Kitchen',      floor: 0, bounds: cell(2, 2), centralObject: 'a long table' },
+    { id: 'cellar',        name: 'Cellar',       floor: 0, bounds: cell(0, 3), centralObject: 'a coal chute' },
+    { id: 'library',       name: 'Library',      floor: 0, bounds: cell(1, 3), centralObject: 'a reading chair' },
+    { id: 'conservatory',  name: 'Conservatory', floor: 0, bounds: cell(2, 3), centralObject: 'a dead fern' },
+  ],
+  doors: [
+    // Upper floor
+    { id: 'd_nursery_music',   a: 'nursery',    b: 'music_room',   at: vEdge(1, 0), span: 60, kind: 'doorway' },
+    { id: 'd_music_bathroom',  a: 'music_room', b: 'bathroom',     at: vEdge(2, 0), span: 60, kind: 'doorway' },
+    { id: 'd_attic_playroom',  a: 'attic',      b: 'playroom',     at: vEdge(1, 1), span: 60, kind: 'doorway' },
+    { id: 'd_playroom_study',  a: 'playroom',   b: 'study',        at: vEdge(2, 1), span: 60, kind: 'doorway' },
+    { id: 'd_nursery_attic',   a: 'nursery',    b: 'attic',        at: hEdge(0, 1), span: 60, kind: 'doorway' },
+    { id: 'd_music_playroom',  a: 'music_room', b: 'playroom',     at: hEdge(1, 1), span: 60, kind: 'doorway' },
+    { id: 'd_bathroom_study',  a: 'bathroom',   b: 'study',        at: hEdge(2, 1), span: 60, kind: 'doorway' },
+    // Ground floor
+    { id: 'd_bed_hearth',      a: 'shared_bedroom', b: 'hearth',       at: vEdge(1, 2), span: 60, kind: 'doorway' },
+    { id: 'd_hearth_kitchen',  a: 'hearth',         b: 'kitchen',      at: vEdge(2, 2), span: 60, kind: 'doorway' },
+    { id: 'd_cellar_library',  a: 'cellar',         b: 'library',      at: vEdge(1, 3), span: 60, kind: 'doorway' },
+    { id: 'd_library_consv',   a: 'library',        b: 'conservatory', at: vEdge(2, 3), span: 60, kind: 'doorway' },
+    { id: 'd_bed_cellar',      a: 'shared_bedroom', b: 'cellar',       at: hEdge(0, 3), span: 60, kind: 'doorway' },
+    { id: 'd_hearth_library',  a: 'hearth',         b: 'library',      at: hEdge(1, 3), span: 60, kind: 'doorway' },
+    { id: 'd_kitchen_consv',   a: 'kitchen',        b: 'conservatory', at: hEdge(2, 3), span: 60, kind: 'doorway' },
+    // Stairs — on the shared edge between world rows 1 and 2
+    { id: 's_attic_bedroom',   a: 'attic', b: 'shared_bedroom', at: hEdge(0, 2), span: 60, kind: 'stair' },
+    { id: 's_study_kitchen',   a: 'study', b: 'kitchen',        at: hEdge(2, 2), span: 60, kind: 'stair' },
+  ],
+  /** v12.2 §13 — peripheral rooms close from Night Four. Chosen so that every
+   *  stage keeps a two-door room, strands nobody, and never touches the Hearth. */
+  sealOrder: ['bathroom', 'conservatory', 'nursery'],
+};
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd v12 && npm test`
+Expected: PASS. If a door-count assertion fails, **fix the house data, never the invariant** — the ceiling and the Bind-eligibility rule both come from the rules document.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add v12/
+git commit -m "feat(v12): rebuild the house for v12.2 — three doors, and branching
+
+Task 2 built the ring v12.1 §15 names as a defect. Twelve rooms on two
+3x2 grids, four three-door hubs, and validateHouse now owns the invariant
+that a two-door Bind room survives every stage of the Night-Four collapse.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -586,7 +971,7 @@ import { makeSink, type MatchEvent } from '../src/core/events';
 describe('EventSink', () => {
   it('drains in emission order and empties', () => {
     const sink = makeSink();
-    sink.emit({ kind: 'move.enter', tick: 1, night: 1, actor: 'pike', room: 'kitchen', via: 'd_hearth_kit' });
+    sink.emit({ kind: 'move.enter', tick: 1, night: 1, actor: 'pike', room: 'kitchen', via: 'd_hearth_kitchen' });
     sink.emit({ kind: 'take.warn',  tick: 5, night: 2, actor: 'wren', victim: 'pike', room: 'kitchen' });
     const out = sink.drain();
     expect(out.map(e => e.kind)).toEqual(['move.enter', 'take.warn']);
@@ -617,7 +1002,11 @@ export type ActorId = string;
 export type LanternId = string;
 export type SockId = string;
 
-export type FlameReason = 'take' | 'snuff' | 'failed-call' | 'house-event';
+/** v12.2 §2's flame list. `crowd` is named here but **not implemented anywhere in
+ *  slices 0–1** — v12.2 §14 is parked as a known defect (the economy pass measured
+ *  it as a villain ability). The log needs the reason so a hand-authored fixture can
+ *  express it; no code may burn a flame for crowding. */
+export type FlameReason = 'take' | 'snuff' | 'wrong-call' | 'crowd';
 export type SoundKind = 'take' | 'snuff' | 'slip' | 'shed';
 
 interface Base { tick: number; night: number }
@@ -863,18 +1252,18 @@ describe('stepPosition', () => {
   });
 
   it('transfers to the neighbouring room when crossing a door span', () => {
-    const door = HOLLOW.doors.find(d => d.id === 'd_kit_lib')!;
+    const door = HOLLOW.doors.find(d => d.id === 'd_hearth_kitchen')!;
     const from = { x: door.at.x - 20, y: door.at.y };
-    const r = stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 });
-    expect(r.room).toBe('library');
-    expect(r.crossed).toBe('d_kit_lib');
+    const r = stepPosition(HOLLOW, 'hearth', from, { x: 60, y: 0 });
+    expect(r.room).toBe('kitchen');
+    expect(r.crossed).toBe('d_hearth_kitchen');
   });
 
   it('does not transfer when crossing the same wall outside the door span', () => {
-    const door = HOLLOW.doors.find(d => d.id === 'd_kit_lib')!;
+    const door = HOLLOW.doors.find(d => d.id === 'd_hearth_kitchen')!;
     const from = { x: door.at.x - 20, y: door.at.y + door.span };
-    const r = stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 });
-    expect(r.room).toBe('kitchen');
+    const r = stepPosition(HOLLOW, 'hearth', from, { x: 60, y: 0 });
+    expect(r.room).toBe('hearth');
     expect(r.crossed).toBeNull();
   });
 });
@@ -1084,7 +1473,7 @@ export class Sim {
       }),
       lanterns: [
         { id: 'lantern_a', state: { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: true } },
-        { id: 'lantern_b', state: { kind: 'placed', room: 'hearth', at: { x: 0, y: 0 }, watching: 'd_hearth_kit', lit: true } },
+        { id: 'lantern_b', state: { kind: 'placed', room: 'hearth', at: { x: 0, y: 0 }, watching: 'd_hearth_kitchen', lit: true } },
       ],
     };
     // Park the starting lanterns at their room centres.
@@ -1205,11 +1594,11 @@ const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
 
 describe('closed doors', () => {
   it('blocks a crossing that would otherwise succeed', () => {
-    const door = HOLLOW.doors.find(d => d.id === 'd_kit_lib')!;
+    const door = HOLLOW.doors.find(d => d.id === 'd_hearth_kitchen')!;
     const from = { x: door.at.x - 20, y: door.at.y };
-    expect(stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 }, new Set()).room).toBe('library');
-    expect(stepPosition(HOLLOW, 'kitchen', from, { x: 60, y: 0 }, new Set(['d_kit_lib'])).room)
-      .toBe('kitchen');
+    expect(stepPosition(HOLLOW, 'hearth', from, { x: 60, y: 0 }, new Set()).room).toBe('kitchen');
+    expect(stepPosition(HOLLOW, 'hearth', from, { x: 60, y: 0 }, new Set(['d_hearth_kitchen'])).room)
+      .toBe('hearth');
   });
 });
 
@@ -1218,10 +1607,10 @@ describe('toggleDoor', () => {
     const sim = createSim(HOLLOW, 42, IDS);
     const actor = sim.state.actors[0]!;
     actor.room = 'kitchen';
-    expect(sim.toggleDoor(actor.id, 'd_kit_lib').ok).toBe(true);
-    expect(sim.state.closedDoors.has('d_kit_lib')).toBe(true);
-    expect(sim.toggleDoor(actor.id, 'd_kit_lib').ok).toBe(true);
-    expect(sim.state.closedDoors.has('d_kit_lib')).toBe(false);
+    expect(sim.toggleDoor(actor.id, 'd_hearth_kitchen').ok).toBe(true);
+    expect(sim.state.closedDoors.has('d_hearth_kitchen')).toBe(true);
+    expect(sim.toggleDoor(actor.id, 'd_hearth_kitchen').ok).toBe(true);
+    expect(sim.state.closedDoors.has('d_hearth_kitchen')).toBe(false);
     const kinds = sim.drain().filter(e => e.kind === 'door.toggle');
     expect(kinds).toHaveLength(2);
   });
@@ -1229,7 +1618,7 @@ describe('toggleDoor', () => {
   it('refuses a door that is not an exit of your room', () => {
     const sim = createSim(HOLLOW, 42, IDS);
     sim.state.actors[0]!.room = 'kitchen';
-    expect(sim.toggleDoor(sim.state.actors[0]!.id, 'd_bath_attic').ok).toBe(false);
+    expect(sim.toggleDoor(sim.state.actors[0]!.id, 'd_attic_playroom').ok).toBe(false);
   });
 });
 
@@ -1403,18 +1792,18 @@ describe('lantern actions', () => {
     const sim = simWithActorAt('kitchen');
     applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
     sim.state.actors[0]!.room = 'kitchen';
-    const r = applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_kit_lib' });
+    const r = applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_hearth_kitchen' });
     expect(r.ok).toBe(true);
     const placed = sim.state.lanterns[0]!.state;
-    expect(placed).toMatchObject({ kind: 'placed', room: 'kitchen', watching: 'd_kit_lib', lit: true });
-    expect(sim.drain().some(e => e.kind === 'lantern.place' && e.watching === 'd_kit_lib')).toBe(true);
+    expect(placed).toMatchObject({ kind: 'placed', room: 'kitchen', watching: 'd_hearth_kitchen', lit: true });
+    expect(sim.drain().some(e => e.kind === 'lantern.place' && e.watching === 'd_hearth_kitchen')).toBe(true);
   });
 
   it('refuses to watch a door that is not an exit of the room', () => {
     const sim = simWithActorAt('kitchen');
     applyLanternAction(sim, 'bell', { kind: 'pickup', lantern: 'lantern_a' });
     sim.state.actors[0]!.room = 'kitchen';
-    expect(applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_bath_attic' }).ok).toBe(false);
+    expect(applyLanternAction(sim, 'bell', { kind: 'place', watching: 'd_attic_playroom' }).ok).toBe(false);
   });
 
   it('snuffing unlights a placed lantern and relighting restores it', () => {
@@ -1552,6 +1941,7 @@ git commit -m "feat(v12): lanterns, and §10.2's one watched doorway"
 import { createSim } from '../src/core/sim';
 import { applyLanternAction } from '../src/core/lantern';
 import { canTake, beginTake, TAKE_TICKS, WARN_AT_TICKS } from '../src/core/take';
+import { dist } from '../src/core/geometry';
 import { HOLLOW } from '../src/house/hollow';
 
 const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
@@ -1599,7 +1989,7 @@ describe('canTake', () => {
     const wren = sim.state.actors.find(a => a.id === 'wren')!;
     wren.carrying = 'none';
     sim.state.lanterns[0]!.state = {
-      kind: 'placed', room: 'attic', at: { ...wren.at }, watching: 'd_bath_attic', lit: true,
+      kind: 'placed', room: 'attic', at: { ...wren.at }, watching: 'd_attic_playroom', lit: true,
     };
     expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'lantern-protected' });
   });
@@ -1670,7 +2060,7 @@ describe('TakeAttempt', () => {
     for (let i = 0; i < WARN_AT_TICKS + 2; i++) attempt.tick(sim);
     const victim = sim.state.actors.find(a => a.id === 'pike')!;
     sim.state.lanterns[0]!.state = {
-      kind: 'placed', room: 'attic', at: { ...victim.at }, watching: 'd_bath_attic', lit: true,
+      kind: 'placed', room: 'attic', at: { ...victim.at }, watching: 'd_attic_playroom', lit: true,
     };
     expect(attempt.tick(sim)).toBe('broken');
   });
@@ -1681,6 +2071,48 @@ describe('TakeAttempt', () => {
     for (let i = 0; i < TAKE_TICKS + 5; i++) attempt.tick(sim);
     expect(sim.state.actors.find(a => a.id === 'pike')!.alive).toBe(false);
     expect(sim.drain().filter(e => e.kind === 'take.complete')).toHaveLength(1);
+  });
+
+  // v12.2 §4 — "While the Odd Sock is grabbing you, they move slower than you do.
+  // So running actually works." Without this the warning window is decoration.
+  it('slows the grabber for the whole attempt, warning tick included', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    for (let i = 0; i < WARN_AT_TICKS + 1; i++) attempt.tick(sim);
+    expect(sim.state.actors.find(a => a.id === 'wren')!.grabbing).toBe(true);
+  });
+
+  it('lets a fleeing target outpace a grab in progress', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    attempt.tick(sim);
+    const before = dist(
+      sim.state.actors.find(a => a.id === 'wren')!.at,
+      sim.state.actors.find(a => a.id === 'pike')!.at);
+    for (let i = 0; i < 20; i++) {
+      sim.step(new Map([
+        ['pike', { moveX: 1, moveY: 0, run: true }],
+        ['wren', { moveX: 1, moveY: 0, run: true }],
+      ]));
+      attempt.tick(sim);
+    }
+    const after = dist(
+      sim.state.actors.find(a => a.id === 'wren')!.at,
+      sim.state.actors.find(a => a.id === 'pike')!.at);
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it('clears the penalty when the attempt breaks', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    attempt.tick(sim);
+    expect(sim.state.actors.find(a => a.id === 'wren')!.grabbing).toBe(true);
+    const victim = sim.state.actors.find(a => a.id === 'pike')!;
+    sim.state.lanterns[0]!.state = {
+      kind: 'placed', room: 'attic', at: { ...victim.at }, watching: 'd_attic_playroom', lit: true,
+    };
+    expect(attempt.tick(sim)).toBe('broken');
+    expect(sim.state.actors.find(a => a.id === 'wren')!.grabbing).toBe(false);
   });
 });
 ```
@@ -1702,8 +2134,11 @@ import type { Sim } from './sim';
 
 export const CONTACT_RADIUS = 40;
 export const INTERVENE_RADIUS = 200;
-export const TAKE_TICKS = 45;      // 1.5 s at 30 Hz
-export const WARN_AT_TICKS = 15;   // 0.5 s of warning before it lands
+
+// v12.2 §7 — "about three seconds of contact". v12.0 left the duration unstated
+// and this plan had guessed 1.5 s.
+export const TAKE_TICKS = 90;      // 3 s at 30 Hz
+export const WARN_AT_TICKS = 30;   // 1 s of warning before it lands
 
 export type TakeBlock =
   | 'too-lit' | 'lantern-protected' | 'witness'
@@ -1765,7 +2200,13 @@ export class TakeAttempt {
   tick(sim: Sim): TakeTick {
     if (this.done) return 'complete';
     const check = canTake(sim, this.taker, this.victim);
-    if (!check.ok) return 'broken';
+    if (!check.ok) { sim.setGrabbing(this.taker, false); return 'broken'; }
+
+    // v12.2 §4 — "While the Odd Sock is grabbing you, they move slower than you
+    // do. So running actually works." The penalty must be live for the whole
+    // attempt, including the warning tick, or the warning buys the victim
+    // nothing. Set before the early returns below, cleared on every exit.
+    sim.setGrabbing(this.taker, true);
 
     this.elapsed++;
     const victim = sim.state.actors.find(a => a.id === this.victim)!;
@@ -1777,8 +2218,9 @@ export class TakeAttempt {
     if (this.elapsed >= TAKE_TICKS) {
       victim.alive = false;
       this.done = true;
+      sim.setGrabbing(this.taker, false);
       sim.emitTake('take.complete', this.taker, this.victim, victim.room);
-      // rules §12.1 — a muffled sound audible on that floor
+      // v12.2 §7 — a muffled noise is heard on that floor
       sim.emitSound('take', victim.room);
       return 'complete';
     }
@@ -1791,9 +2233,32 @@ export function beginTake(taker: ActorId, victim: ActorId): TakeAttempt {
 }
 ```
 
-- [ ] **Step 4: Add the two emit doors to Sim**
+- [ ] **Step 4: Make the grabber slower, and add the emit doors to Sim**
 
-In `v12/src/core/sim.ts`, add to `Sim`:
+In `v12/src/core/sim.ts`, add the constant beside the other speeds:
+
+```ts
+/** v12.2 §4 — the grabber moves slower than their target for the whole attempt.
+ *  This is what makes the warning window mean something: a target with somewhere
+ *  to run can outpace a grab in progress. */
+export const GRAB_SPEED_PENALTY = 0.55;
+```
+
+Add `grabbing: boolean;` to `Actor`, initialised `false` in the constructor. In `step`, apply it alongside the carry slowdown:
+
+```ts
+      if (actor.carrying === 'lantern') speed *= CARRY_SLOWDOWN;
+      if (actor.grabbing) speed *= GRAB_SPEED_PENALTY;
+```
+
+Then add these three methods to `Sim`:
+
+```ts
+  setGrabbing(id: ActorId, on: boolean): void {
+    const a = this.state.actors.find(x => x.id === id);
+    if (a) a.grabbing = on;
+  }
+
 
 ```ts
   emitTake(kind: 'take.warn' | 'take.complete', actor: ActorId, victim: ActorId, room: RoomId): void {
@@ -2209,7 +2674,7 @@ function twoInRoom(night: number, lit: boolean) {
     a.room = 'attic'; a.at = { ...spot };
   }
   sim.state.lanterns[0]!.state = lit
-    ? { kind: 'placed', room: 'attic', at: { ...spot }, watching: 'd_bath_attic', lit: true }
+    ? { kind: 'placed', room: 'attic', at: { ...spot }, watching: 'd_attic_playroom', lit: true }
     : { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: false };
   sim.state.lanterns[1]!.state = { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: false };
   return sim;
@@ -2369,8 +2834,8 @@ import { HOLLOW } from '../src/house/hollow';
 
 const SAMPLES: MatchEvent[] = [
   { kind: 'step', tick: 0, night: 1, actor: 'bell', room: 'kitchen', floor: 0, hurried: false },
-  { kind: 'move.enter', tick: 1, night: 1, actor: 'bell', room: 'kitchen', via: 'd_kit_lib' },
-  { kind: 'lantern.place', tick: 2, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'kitchen', watching: 'd_kit_lib' },
+  { kind: 'move.enter', tick: 1, night: 1, actor: 'bell', room: 'kitchen', via: 'd_hearth_kitchen' },
+  { kind: 'lantern.place', tick: 2, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'kitchen', watching: 'd_hearth_kitchen' },
   { kind: 'lantern.snuff', tick: 3, night: 2, actor: 'wren', lantern: 'lantern_a', room: 'kitchen' },
   { kind: 'take.warn', tick: 4, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
   { kind: 'take.complete', tick: 5, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
@@ -2742,7 +3207,8 @@ git commit -m "feat(v12): slice 0 — a house you can walk in the dark"
 - Produces:
   - `interface MatchLog { seed: number; house: string; events: MatchEvent[] }`
   - `interface LanternRecord { room: RoomId; crossings: number; outward: number; hurried: boolean; moved: boolean }`
-  - `interface HouseProjection { night: number; didNotReturn: ActorId[]; flamesLost: number; flamesRemaining: number; lanternRecords: LanternRecord[]; socksSecured: number; roomsDisturbed: RoomId[]; floorSounds: { floor: number; sound: SoundKind }[]; inactivityFloor: number | null; ghostDisturbances: RoomId[]; midnightRoom: RoomId | null }`
+  - `interface HouseProjection { night: number; didNotReturn: ActorId[]; flamesLost: number; flamesRemaining: number; lanternRecords: LanternRecord[]; socksSecured: number; roomsDisturbed: RoomId[]; floorSounds: { floor: number; sound: SoundKind }[]; crowded: boolean }` — **v12.2 §8's list exactly.** `inactivityFloor`, `ghostDisturbances` and `midnightRoom` were cut in v12.1 and must not reappear
+  - `type ClaimId = string`; every `Claim` carries `id`, because v12.2 §8's fifth mark type (`deny`) has to point at one
   - `projectForHouse(log: MatchLog, night: number): HouseProjection`
 
 **The projection's type is the enforcement mechanism** for Global Constraint 4. `HouseProjection` carries `ActorId` in exactly one field — `didNotReturn`, which rules §13.1 explicitly grants.
@@ -2776,9 +3242,9 @@ describe('projectForHouse', () => {
 
   it('reduces lantern traffic to counts and directions, never names', () => {
     const p = projectForHouse(log([
-      { kind: 'lantern.place', tick: 1, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_play' },
-      { kind: 'move.enter', tick: 5, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_play' },
-      { kind: 'move.enter', tick: 8, night: 3, actor: 'moss', room: 'music_room', via: 'd_music_play' },
+      { kind: 'lantern.place', tick: 1, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 5, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 8, night: 3, actor: 'moss', room: 'music_room', via: 'd_music_playroom' },
     ]), 3);
     const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
     expect(rec.crossings).toBe(2);
@@ -2816,6 +3282,33 @@ describe('projectForHouse', () => {
     expect(p.floorSounds).toEqual([{ floor: 1, sound: 'take' }]);
     expect(JSON.stringify(p.floorSounds)).not.toContain('attic');
   });
+
+  // v12.2 §8 — "whether the children crowded together", as a bare boolean.
+  it('reduces a crowd to a boolean, keeping neither the room nor the names', () => {
+    const p = projectForHouse(log(['clem', 'moss', 'sparrow'].map((actor, i) => ({
+      kind: 'move.enter' as const, tick: 10 + i, night: 5, actor,
+      room: 'library', via: 'd_hearth_library',
+    }))), 5);
+    expect(p.crowded).toBe(true);
+    expect(JSON.stringify(p)).not.toContain('library');
+    expect(JSON.stringify(p)).not.toContain('clem');
+  });
+
+  it('is not crowded at two', () => {
+    const p = projectForHouse(log(['clem', 'moss'].map((actor, i) => ({
+      kind: 'move.enter' as const, tick: 10 + i, night: 5, actor,
+      room: 'library', via: 'd_hearth_library',
+    }))), 5);
+    expect(p.crowded).toBe(false);
+  });
+
+  // Cut in v12.1: the floor report leaked the villain by elimination, and
+  // Midnight was "a beat, not a mechanic". Neither may come back.
+  it('carries no inactivity floor and no Midnight room', () => {
+    const p = projectForHouse(log([]), 4) as Record<string, unknown>;
+    expect(p['inactivityFloor']).toBeUndefined();
+    expect(p['midnightRoom']).toBeUndefined();
+  });
 });
 ```
 
@@ -2834,13 +3327,22 @@ import type { RoomId } from '../core/house';
 
 export interface MatchLog { seed: number; house: string; events: MatchEvent[] }
 
-/** rules §13.2 — one claim marker per living player per morning, permanent
- *  and public for the rest of the match. */
+export type ClaimId = string;
+
+/** v12.2 §8 — one mark per living player per morning, permanent and public for
+ *  the rest of the game. Five kinds, not four: `deny` is new in v12.1, and §15
+ *  gives the reason — the board "had four ways to make a claim and no way to say
+ *  'that's not true,' so it couldn't actually hold an argument."
+ *
+ *  Every claim carries an `id` because `deny` has to point at one. */
+interface ClaimBase { id: ClaimId; night: number; by: ActorId }
+
 export type Claim =
-  | { kind: 'player-room';   night: number; by: ActorId; subject: ActorId; room: RoomId }
-  | { kind: 'player-player'; night: number; by: ActorId; subject: ActorId; object: ActorId }
-  | { kind: 'player-sock';   night: number; by: ActorId; subject: ActorId; sock: SockId }
-  | { kind: 'room-incident'; night: number; by: ActorId; room: RoomId; incident: string };
+  | (ClaimBase & { kind: 'player-room';   subject: ActorId; room: RoomId })
+  | (ClaimBase & { kind: 'player-player'; subject: ActorId; object: ActorId })
+  | (ClaimBase & { kind: 'player-sock';   subject: ActorId; sock: SockId })
+  | (ClaimBase & { kind: 'room-incident'; room: RoomId; incident: string })
+  | (ClaimBase & { kind: 'deny';          denies: ClaimId });
 ```
 
 `v12/src/log/project.ts`:
@@ -2870,10 +3372,16 @@ export interface HouseProjection {
   socksSecured: number;
   roomsDisturbed: RoomId[];
   floorSounds: { floor: number; sound: SoundKind }[];
-  inactivityFloor: number | null;
-  ghostDisturbances: RoomId[];
-  midnightRoom: RoomId | null;
+  /** v12.2 §8 — "whether the children crowded together". A boolean, deliberately:
+   *  naming the room would leak who was in it, and the count is what §14 prices.
+   *  §14 itself is parked, so this reports and costs nothing. */
+  crowded: boolean;
 }
+// Cut in v12.2 and deliberately absent: `inactivityFloor` (§15 cuts the floor
+// report — it let a standing group binary-search the villain, one bit a night,
+// and could not be computed without leaking who they were), `midnightRoom`
+// (Midnight is cut — "a beat, not a mechanic"), and `ghostDisturbances`
+// (no longer in §8's report list).
 
 export function projectForHouse(log: MatchLog, night: number): HouseProjection {
   const nightly = log.events.filter(e => e.night === night);
@@ -2946,6 +3454,15 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
     moved: rec.moved,
   }));
 
+  // v12.2 §8 — "whether the children crowded together". Three or more bodies
+  // ending the night in one room. Reported, never priced: §14 is parked.
+  const endedIn = new Map<RoomId, number>();
+  for (const e of nightly) {
+    if (e.kind !== 'move.enter') continue;
+    endedIn.set(e.room, (endedIn.get(e.room) ?? 0) + 1);
+  }
+  const crowded = [...endedIn.values()].some(n => n >= 3);
+
   return {
     night,
     didNotReturn,
@@ -2955,9 +3472,7 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
     socksSecured,
     roomsDisturbed: [...roomsDisturbed],
     floorSounds,
-    inactivityFloor: null,
-    ghostDisturbances: [],
-    midnightRoom: night === 4 ? 'library' : null,
+    crowded,
   };
 }
 ```
@@ -3017,9 +3532,9 @@ describe('renderReport', () => {
   // that rule real.
   it('produces identical text when only the identities differ', () => {
     const shape = (a: string, b: string, c: string): MatchEvent[] => ([
-      { kind: 'lantern.place', tick: 1, night: 3, actor: a, lantern: 'lantern_a', room: 'music_room', watching: 'd_music_play' },
-      { kind: 'move.enter', tick: 5, night: 3, actor: b, room: 'playroom', via: 'd_music_play' },
-      { kind: 'move.enter', tick: 9, night: 3, actor: c, room: 'music_room', via: 'd_music_play' },
+      { kind: 'lantern.place', tick: 1, night: 3, actor: a, lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 5, night: 3, actor: b, room: 'playroom', via: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 9, night: 3, actor: c, room: 'music_room', via: 'd_music_playroom' },
       { kind: 'sound', tick: 12, night: 3, floor: 1, sound: 'snuff', room: 'music_room' },
     ]);
     const one = renderReport(projectForHouse(log(shape('bell', 'pike', 'clem')), 3), HOLLOW);
@@ -3052,9 +3567,32 @@ describe('renderReport', () => {
     expect(lines.join('\n')).toMatch(/No flame went out\. 5 remain\./);
   });
 
-  it('announces the Midnight room on night four — rules §18', () => {
-    const lines = renderReport(projectForHouse(log([]), 4), HOLLOW);
-    expect(lines.join('\n')).toMatch(/Library/i);
+  // v12.2 §8's last line. §14 prices crowding and §14 is parked, so the report
+  // must still SAY it happened while nothing burns a flame for it.
+  it('reports a crowd without naming the room or anyone in it', () => {
+    const crowd: MatchEvent[] = ['clem', 'moss', 'sparrow'].map((actor, i) => ({
+      kind: 'move.enter', tick: 10 + i, night: 5, actor, room: 'library', via: 'd_hearth_library',
+    }));
+    const lines = renderReport(projectForHouse(log(crowd), 5), HOLLOW);
+    const text = lines.join('\n');
+    expect(text).toMatch(/crowded together/i);
+    expect(text).not.toMatch(/Library/i);
+    for (const who of ['clem', 'moss', 'sparrow']) expect(text).not.toContain(who);
+  });
+
+  it('says nothing about crowding when only two gathered', () => {
+    const pair: MatchEvent[] = ['clem', 'moss'].map((actor, i) => ({
+      kind: 'move.enter', tick: 10 + i, night: 5, actor, room: 'library', via: 'd_hearth_library',
+    }));
+    expect(renderReport(projectForHouse(log(pair), 5), HOLLOW).join('\n'))
+      .not.toMatch(/crowded/i);
+  });
+
+  // Midnight was cut in v12.1 — "a beat, not a mechanic". The report must not
+  // resurrect it on night four.
+  it('announces no Midnight room on night four', () => {
+    expect(renderReport(projectForHouse(log([]), 4), HOLLOW).join('\n'))
+      .not.toMatch(/midnight/i);
   });
 });
 ```
@@ -3074,12 +3612,14 @@ import type { HouseProjection } from './project';
 
 const FLOOR_WORD = ['downstairs', 'upstairs'] as const;
 
-/** rules §13.1 — the house reports facts and never interprets, in this order:
- *  who did not return, flames, lantern records, socks secured, rooms
- *  disturbed, floor sounds, inactivity traces, ghost disturbances, Midnight.
+/** v12.2 §8 — the house reports facts, never opinions, in this order:
+ *  who didn't come back, how many flames are left, what the lanterns saw,
+ *  which socks got secured, which rooms were disturbed, which floor a noise
+ *  came from, whether the children crowded together.
  *
  *  It takes a HouseProjection and nothing else. That type carries no identity
- *  but didNotReturn, so the voice rule holds by construction. */
+ *  but didNotReturn, so §8's voice rule — "the house never says anything that
+ *  depends on who someone is" — holds by construction. */
 export function renderReport(p: HouseProjection, house: House): string[] {
   const lines: string[] = [];
   const name = (id: string) => roomById(house, id).name;
@@ -3117,20 +3657,12 @@ export function renderReport(p: HouseProjection, house: House): string[] {
   }
 
   for (const s of p.floorSounds) {
-    lines.push(`A sound came from ${FLOOR_WORD[s.floor] ?? 'somewhere'}.`);
+    lines.push(`A noise came from ${FLOOR_WORD[s.floor] ?? 'somewhere'}.`);
   }
 
-  if (p.inactivityFloor !== null) {
-    lines.push(`The house felt someone still, ${FLOOR_WORD[p.inactivityFloor] ?? 'somewhere'}.`);
-  }
-
-  for (const room of p.ghostDisturbances) {
-    lines.push(`A draft moved through the ${name(room)}.`);
-  }
-
-  if (p.midnightRoom) {
-    lines.push(`At Midnight, the ${name(p.midnightRoom)} will show what stands in it.`);
-  }
+  // v12.2 §8's last line. It says a crowd happened, never where or who —
+  // naming the room would identify everyone standing in it.
+  if (p.crowded) lines.push('The children crowded together.');
 
   // The flame line always prints, so "nothing happened" means one line only.
   if (lines.length === 1) lines.push('The house stayed dark. The house saw nothing.');
@@ -3207,23 +3739,56 @@ describe('SIX_NIGHT_MATCH', () => {
     }
   });
 
-  // spec §5 — the fixture must contain a Displace
-  it('contains a sock picked up in one room and dropped in another', () => {
+  // Displace was CUT in v12.1: with a person-only accusation, where a sock was
+  // found meant nothing mechanically, and moving it threw away the villain's
+  // best quiet-night play. The fixture must not model one.
+  it('contains no Displace — no sock is dropped in a room it was not found in', () => {
     const pickups = SIX_NIGHT_MATCH.events.filter(e => e.kind === 'sock.pickup');
     const drops = SIX_NIGHT_MATCH.events.filter(e => e.kind === 'sock.drop');
     const displaced = pickups.some(p =>
       drops.some(d => 'sock' in d && 'sock' in p && d.sock === p.sock && d.room !== p.room));
-    expect(displaced).toBe(true);
+    expect(displaced).toBe(false);
   });
 
-  // rules §8 — no Take is possible on Night One
-  it('has no Take on night one', () => {
+  // v12.2 §6 pins retrieval latency to zero, and it is the switch between 0 and
+  // 227 villain lines that deny an accusation. The fixture must exercise it.
+  it('secures a sock on the same night it was picked up', () => {
+    const pickup = SIX_NIGHT_MATCH.events.find(e => e.kind === 'sock.pickup');
+    expect(pickup).toBeDefined();
+    const secure = SIX_NIGHT_MATCH.events.find(
+      e => e.kind === 'sock.secure' && 'sock' in pickup! && e.sock === pickup.sock);
+    expect(secure?.night).toBe(pickup!.night);
+  });
+
+  // v12.2 §6 — a sock on the floor stays there, night after night
+  it('leaves a sock lying across a night boundary before anyone lifts it', () => {
+    const spawn = SIX_NIGHT_MATCH.events.find(e => e.kind === 'sock.spawn' && e.sock === 'sock_1');
+    const pickup = SIX_NIGHT_MATCH.events.find(e => e.kind === 'sock.pickup' && e.sock === 'sock_1');
+    expect(pickup!.night).toBeGreaterThan(spawn!.night);
+  });
+
+  // v12.2 §13 — the Odd Sock cannot grab anyone on Night One
+  it('has no grab on night one', () => {
     expect(SIX_NIGHT_MATCH.events.some(e => e.kind === 'take.complete' && e.night === 1)).toBe(false);
   });
 
-  // rules §15.4 — a failed Call puts out a flame
-  it('contains a failed Call that cost a flame', () => {
-    expect(SIX_NIGHT_MATCH.events.some(e => e.kind === 'flame.out' && e.reason === 'failed-call')).toBe(true);
+  // v12.2 §10 — a wrong accusation costs one sock and one flame
+  it('contains a wrong accusation that cost a flame', () => {
+    expect(SIX_NIGHT_MATCH.events.some(e => e.kind === 'flame.out' && e.reason === 'wrong-call')).toBe(true);
+  });
+
+  // v12.2 §7 — after two quiet nights a sock falls in the villain's exact room,
+  // and no flame goes out for it
+  it('sheds a sock on the second quiet night without spending a flame', () => {
+    const shed = SIX_NIGHT_MATCH.events.find(e => e.kind === 'sock.spawn' && e.source === 'shed');
+    expect(shed).toBeDefined();
+    expect(SIX_NIGHT_MATCH.events.some(
+      e => e.kind === 'flame.out' && e.night === shed!.night)).toBe(false);
+  });
+
+  // §14 is parked. The fixture may report a crowd; it must never charge one.
+  it('never burns a flame for crowding', () => {
+    expect(SIX_NIGHT_MATCH.events.some(e => e.kind === 'flame.out' && e.reason === 'crowd')).toBe(false);
   });
 });
 
@@ -3246,6 +3811,23 @@ describe('SIX_NIGHT_CLAIMS', () => {
       && a.subject === b.subject && a.room !== b.room));
     expect(contradiction).toBe(true);
   });
+
+  it('gives every mark a unique id, because a denial has to point at one', () => {
+    const ids = SIX_NIGHT_CLAIMS.map(c => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  // v12.2 §8's fifth mark type — the one that lets the board hold an argument
+  it('contains a denial that points at a mark actually on the board', () => {
+    const denials = SIX_NIGHT_CLAIMS.filter(
+      (c): c is Extract<Claim, { kind: 'deny' }> => c.kind === 'deny');
+    expect(denials.length).toBeGreaterThan(0);
+    for (const d of denials) {
+      const target = SIX_NIGHT_CLAIMS.find(c => c.id === d.denies);
+      expect(target, `denial ${d.id} points at nothing`).toBeDefined();
+      expect(target!.by).not.toBe(d.by);
+    }
+  });
 });
 ```
 
@@ -3267,61 +3849,73 @@ import type { Claim, MatchLog } from './schema';
  *  claim board (spec §5), not to assert anything about balance. It must never
  *  be treated as data. */
 const events: MatchEvent[] = [
-  // Night 1 — rules §8: no Take is possible. Lanterns get placed, that is all.
+  // Night 1 — v12.2 §13: the Odd Sock cannot grab on Night One. Lanterns get
+  // placed, that is all.
   { kind: 'move.enter', tick: 30, night: 1, actor: 'bell', room: 'hearth', via: 'd_bed_hearth' },
-  { kind: 'lantern.place', tick: 60, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'hearth', watching: 'd_hearth_kit' },
-  { kind: 'move.enter', tick: 75, night: 1, actor: 'clem', room: 'kitchen', via: 'd_hearth_kit' },
+  { kind: 'lantern.place', tick: 60, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'hearth', watching: 'd_hearth_library' },
+  { kind: 'move.enter', tick: 75, night: 1, actor: 'clem', room: 'kitchen', via: 'd_hearth_kitchen' },
 
-  // Night 2 — the first Take, in the attic. A sound on the upper floor.
-  { kind: 'move.enter', tick: 120, night: 2, actor: 'pike', room: 'attic', via: 'd_bath_attic' },
+  // Night 2 — the first grab, in the attic. A noise on the upper floor.
+  { kind: 'move.enter', tick: 120, night: 2, actor: 'pike', room: 'attic', via: 'd_attic_playroom' },
   { kind: 'take.complete', tick: 200, night: 2, actor: 'wren', victim: 'pike', room: 'attic' },
   { kind: 'sock.spawn', tick: 201, night: 2, sock: 'sock_1', room: 'attic', source: 'take' },
   { kind: 'flame.out', tick: 202, night: 2, reason: 'take', remaining: 4 },
   { kind: 'sound', tick: 203, night: 2, floor: 1, sound: 'take', room: 'attic' },
 
-  // Night 3 — the Displace. sock_1 is lifted from the attic and left in the
-  // cellar, so the evidence now points downstairs. rules §12.3.
-  { kind: 'sock.pickup', tick: 260, night: 3, actor: 'wren', sock: 'sock_1', room: 'attic' },
-  { kind: 'move.enter', tick: 300, night: 3, actor: 'wren', room: 'cellar', via: 's_cellar_attic' },
-  { kind: 'sock.drop', tick: 320, night: 3, actor: 'wren', sock: 'sock_1', room: 'cellar' },
-  { kind: 'lantern.place', tick: 340, night: 3, actor: 'moss', lantern: 'lantern_b', room: 'music_room', watching: 'd_music_play' },
-  { kind: 'move.enter', tick: 350, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_play' },
-  { kind: 'move.enter', tick: 380, night: 3, actor: 'sparrow', room: 'music_room', via: 'd_music_play' },
+  // Night 3 — the villain does nothing (quiet night 1 of 2). sock_1 was still
+  // lying in the attic from Night Two (v12.2 §6: socks stay put), and sparrow
+  // finds AND boards it inside the same night — v12.2 §6's latency-zero pin,
+  // the rule that decides whether the children ever reach an accusation.
+  { kind: 'sock.pickup', tick: 265, night: 3, actor: 'sparrow', sock: 'sock_1', room: 'attic' },
+  { kind: 'move.enter', tick: 290, night: 3, actor: 'sparrow', room: 'shared_bedroom', via: 's_attic_bedroom' },
+  { kind: 'sock.secure', tick: 310, night: 3, actor: 'sparrow', sock: 'sock_1', room: 'shared_bedroom' },
+  { kind: 'lantern.place', tick: 340, night: 3, actor: 'moss', lantern: 'lantern_b', room: 'music_room', watching: 'd_music_playroom' },
+  { kind: 'move.enter', tick: 350, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_playroom' },
 
-  // Night 4 — Midnight. A sock is secured, unlocking nothing yet.
-  { kind: 'sock.pickup', tick: 420, night: 4, actor: 'sparrow', sock: 'sock_1', room: 'cellar' },
-  { kind: 'move.enter', tick: 450, night: 4, actor: 'sparrow', room: 'library', via: 'd_lib_cellar' },
-  { kind: 'sock.secure', tick: 500, night: 4, actor: 'sparrow', sock: 'sock_1', room: 'shared_bedroom' },
+  // Night 4 — quiet night 2 of 2, so v12.2 §7 sheds a sock into the exact room
+  // the villain is standing in. No flame. This is the leak that prices hiding.
+  { kind: 'sock.spawn', tick: 430, night: 4, sock: 'sock_2', room: 'library', source: 'shed' },
+  { kind: 'sound', tick: 431, night: 4, floor: 0, sound: 'shed', room: 'library' },
 
-  // Night 5 — a Snuff, which costs a flame and yields the second sock.
+  // Night 5 — a snuff, and the children crowd. The crowd is reported (v12.2 §8)
+  // and costs nothing: §14 is parked.
+  { kind: 'move.enter', tick: 505, night: 5, actor: 'moss', room: 'library', via: 'd_hearth_library' },
+  { kind: 'move.enter', tick: 512, night: 5, actor: 'clem', room: 'library', via: 'd_cellar_library' },
+  { kind: 'move.enter', tick: 520, night: 5, actor: 'sparrow', room: 'library', via: 'd_library_consv' },
+  { kind: 'sock.pickup', tick: 530, night: 5, actor: 'moss', sock: 'sock_2', room: 'library' },
   { kind: 'lantern.snuff', tick: 540, night: 5, actor: 'wren', lantern: 'lantern_b', room: 'music_room' },
-  { kind: 'sock.spawn', tick: 541, night: 5, sock: 'sock_2', room: 'music_room', source: 'snuff' },
+  { kind: 'sock.spawn', tick: 541, night: 5, sock: 'sock_3', room: 'music_room', source: 'snuff' },
   { kind: 'flame.out', tick: 542, night: 5, reason: 'snuff', remaining: 3 },
   { kind: 'sound', tick: 543, night: 5, floor: 1, sound: 'snuff', room: 'music_room' },
   { kind: 'sock.secure', tick: 580, night: 5, actor: 'moss', sock: 'sock_2', room: 'shared_bedroom' },
 
-  // Night 6 — two socks bought a Call. It named the wrong child, and rules
-  // §15.4 took a flame for it.
-  { kind: 'flame.out', tick: 620, night: 6, reason: 'failed-call', remaining: 2 },
-  { kind: 'sound', tick: 640, night: 6, floor: 0, sound: 'shed', room: 'cellar' },
-  { kind: 'sock.spawn', tick: 641, night: 6, sock: 'sock_3', room: 'cellar', source: 'shed' },
+  // Night 6 — two secured socks bought an accusation. It named the wrong child.
+  // v12.2 §10: that costs ONE sock and one flame, not both socks — so the board
+  // keeps sock_1 and the children are one sock from trying again.
+  { kind: 'flame.out', tick: 620, night: 6, reason: 'wrong-call', remaining: 2 },
 ];
 
 export const SIX_NIGHT_MATCH: MatchLog = { seed: 4242, house: 'HOLLOW', events };
 
-/** One claim per living player per morning (rules §13.2). bell contradicts
- *  themselves about wren between night 3 and night 5 — that contradiction is
- *  the thing slice 1 exists to make visible. */
+/** One mark per living player per morning (v12.2 §8). Two things are planted
+ *  here on purpose, and both are what slice 1 exists to make visible:
+ *
+ *  - **A self-contradiction.** bell puts wren in the hearth on night 2, the
+ *    attic on night 3, and the cellar on night 5. Same author, same subject,
+ *    three rooms.
+ *  - **A denial.** clem spends their entire night-4 mark saying bell's night-3
+ *    claim is false. That is the fifth mark type, new in v12.1 — before it, the
+ *    board had four ways to assert and no way to disagree. */
 export const SIX_NIGHT_CLAIMS: Claim[] = [
-  { kind: 'player-room',   night: 2, by: 'bell',    subject: 'wren',  room: 'hearth' },
-  { kind: 'player-room',   night: 2, by: 'clem',    subject: 'moss',  room: 'kitchen' },
-  { kind: 'room-incident', night: 3, by: 'sparrow', room: 'attic',    incident: 'a sound upstairs' },
-  { kind: 'player-room',   night: 3, by: 'bell',    subject: 'wren',  room: 'attic' },
-  { kind: 'player-player', night: 4, by: 'moss',    subject: 'wren',  object: 'sparrow' },
-  { kind: 'player-sock',   night: 4, by: 'sparrow', subject: 'wren',  sock: 'sock_1' },
-  { kind: 'player-room',   night: 5, by: 'bell',    subject: 'wren',  room: 'cellar' },
-  { kind: 'room-incident', night: 5, by: 'clem',    room: 'music_room', incident: 'the lantern went out' },
-  { kind: 'player-player', night: 6, by: 'sparrow', subject: 'wren',  object: 'bell' },
+  { id: 'c1', kind: 'player-room',   night: 2, by: 'bell',    subject: 'wren',  room: 'hearth' },
+  { id: 'c2', kind: 'player-room',   night: 2, by: 'clem',    subject: 'moss',  room: 'kitchen' },
+  { id: 'c3', kind: 'room-incident', night: 3, by: 'sparrow', room: 'attic',    incident: 'a noise upstairs' },
+  { id: 'c4', kind: 'player-room',   night: 3, by: 'bell',    subject: 'wren',  room: 'attic' },
+  { id: 'c5', kind: 'deny',          night: 4, by: 'clem',    denies: 'c4' },
+  { id: 'c6', kind: 'player-sock',   night: 4, by: 'sparrow', subject: 'wren',  sock: 'sock_1' },
+  { id: 'c7', kind: 'player-room',   night: 5, by: 'bell',    subject: 'wren',  room: 'cellar' },
+  { id: 'c8', kind: 'room-incident', night: 5, by: 'clem',    room: 'music_room', incident: 'the lantern went out' },
+  { id: 'c9', kind: 'player-player', night: 6, by: 'sparrow', subject: 'wren',  object: 'bell' },
 ];
 ```
 
@@ -3362,12 +3956,12 @@ git commit -m "feat(v12): a hand-authored six-night match to render against"
 `v12/test/board.test.ts`:
 
 ```ts
-import { emptyBoard, placeClaim, findContradictions } from '../src/log/board';
+import { emptyBoard, placeClaim, findContradictions, deniersOf } from '../src/log/board';
 import { SIX_NIGHT_CLAIMS } from '../src/log/fixture';
 import type { Claim } from '../src/log/schema';
 
 function roomClaim(night: number, by: string, subject: string, room: string): Claim {
-  return { kind: 'player-room', night, by, subject, room };
+  return { id: `${by}-n${night}`, kind: 'player-room', night, by, subject, room };
 }
 
 describe('placeClaim', () => {
@@ -3433,6 +4027,47 @@ describe('findContradictions', () => {
     expect(findContradictions(b).length).toBeGreaterThan(0);
   });
 });
+
+// v12.2 §8's fifth mark type. §15: the board "had four ways to make a claim and
+// no way to say 'that's not true,' so it couldn't actually hold an argument."
+describe('denial', () => {
+  it('records who denied a mark', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    expect(placeClaim(b, { id: 'd1', kind: 'deny', night: 2, by: 'clem', denies: 'bell-n2' }).ok)
+      .toBe(true);
+    expect(deniersOf(b, 'bell-n2')).toEqual(['clem']);
+  });
+
+  it('refuses to deny a mark that is not on the board', () => {
+    const b = emptyBoard();
+    const r = placeClaim(b, { id: 'd1', kind: 'deny', night: 2, by: 'clem', denies: 'nothing' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/nothing on the board/i);
+  });
+
+  it('refuses to let you deny yourself', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    const r = placeClaim(b, { id: 'd1', kind: 'deny', night: 3, by: 'bell', denies: 'bell-n2' });
+    expect(r.ok).toBe(false);
+  });
+
+  // Denying costs your whole morning — §8 gives one mark each.
+  it('still consumes the denier’s single mark for that morning', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    placeClaim(b, { id: 'd1', kind: 'deny', night: 2, by: 'clem', denies: 'bell-n2' });
+    expect(placeClaim(b, roomClaim(2, 'clem', 'moss', 'kitchen')).ok).toBe(false);
+  });
+
+  it('rejects a duplicate claim id', () => {
+    const b = emptyBoard();
+    placeClaim(b, roomClaim(2, 'bell', 'wren', 'attic'));
+    const dup: Claim = { id: 'bell-n2', kind: 'player-room', night: 3, by: 'clem', subject: 'moss', room: 'kitchen' };
+    expect(placeClaim(b, dup).ok).toBe(false);
+  });
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -3453,14 +4088,33 @@ export function emptyBoard(): Board { return { claims: [] }; }
 
 export interface PlaceResult { ok: boolean; reason?: string }
 
-/** rules §13.2 — one claim marker per living player per morning, and claims
- *  are permanent and public for the rest of the match. Permanence is why the
- *  stored claim is frozen: speech is deniable, a placed claim is committed. */
+/** v12.2 §8 — one mark per living player per morning, permanent and public for
+ *  the rest of the game. Permanence is why the stored claim is frozen: talking
+ *  is deniable, a placed mark is committed. */
 export function placeClaim(board: Board, claim: Claim): PlaceResult {
   const already = board.claims.some(c => c.night === claim.night && c.by === claim.by);
   if (already) return { ok: false, reason: `${claim.by} has already claimed on night ${claim.night}` };
+  if (board.claims.some(c => c.id === claim.id)) {
+    return { ok: false, reason: `claim id ${claim.id} is already on the board` };
+  }
+  // A denial has to point at a mark that exists, or the board can be poisoned
+  // with references to nothing.
+  if (claim.kind === 'deny') {
+    const target = board.claims.find(c => c.id === claim.denies);
+    if (!target) return { ok: false, reason: `nothing on the board with id ${claim.denies}` };
+    if (target.by === claim.by) return { ok: false, reason: 'you cannot deny your own mark' };
+  }
   board.claims.push(Object.freeze({ ...claim }) as Claim);
   return { ok: true };
+}
+
+/** Who has been contradicted, and by whom. A denial is an accusation of lying
+ *  that costs the denier their whole morning — v12.2 §8 gives each player one
+ *  mark, so spending it to say "that's not true" is a real commitment. */
+export function deniersOf(board: Board, id: ClaimId): ActorId[] {
+  return board.claims
+    .filter((c): c is Extract<Claim, { kind: 'deny' }> => c.kind === 'deny' && c.denies === id)
+    .map(c => c.by);
 }
 
 export interface Contradiction { a: Claim; b: Claim; because: string }
