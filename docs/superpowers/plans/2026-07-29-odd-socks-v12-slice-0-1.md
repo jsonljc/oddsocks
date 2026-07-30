@@ -1479,33 +1479,69 @@ Expected: FAIL — modules unresolved.
 `v12/src/core/movement.ts`:
 
 ```ts
-import { clampInside, pointInRect, type Vec2 } from './geometry';
+import { clampInside, pointInRect, type Rect, type Vec2 } from './geometry';
 import { otherSide, roomById, type DoorId, type House, type RoomId } from './house';
 
 export const ACTOR_RADIUS = 14;
 
 export interface StepResult { room: RoomId; at: Vec2; crossed: DoorId | null }
 
+function inset(r: Rect, radius: number): Rect {
+  return { x: r.x + radius, y: r.y + radius, w: r.w - 2 * radius, h: r.h - 2 * radius };
+}
+
 /** Rooms are boxes; doors are gaps of `span` centred on `door.at`. If the
  *  desired position leaves the room and lies within a door's span, transfer.
- *  Otherwise clamp. This is deliberately simpler than a navmesh — the house
- *  is ten rectangles and nothing here needs pathfinding. */
+ *  Otherwise clamp. Deliberately simpler than a navmesh — the house is twelve
+ *  rectangles and nothing here needs pathfinding.
+ *
+ *  Two things make "leaves the room" and "within a door's span" trickier than
+ *  they look. Both were found by building this and watching nobody move.
+ *
+ *  1. **"Leaves the room" must mean leaves the ACTOR_RADIUS-shrunk box**, not
+ *     the raw rectangle. Checking the raw rect makes any desired position
+ *     between (wall − ACTOR_RADIUS) and the wall read as "still inside", and
+ *     `clampInside` puts it straight back to (wall − ACTOR_RADIUS). A walk or
+ *     run tick moves less than ACTOR_RADIUS, so that is a permanent fixed
+ *     point: **nobody could reach a door at any speed, in any room.**
+ *
+ *  2. **A door's span cannot be checked symmetrically on both axes.** `door.at`
+ *     sits in the gap *between* two rooms, so on exactly one axis it lies
+ *     outside this room's bounds — the through-wall axis. Requiring proximity
+ *     to `door.at` on that axis too is stricter than it looks: ACTOR_RADIUS
+ *     plus half the inter-room gap already exceeds half the span, so a legally
+ *     clamped position can never satisfy it and only a run-speed overshoot
+ *     happens to. Walking into the same door would soft-lock. So the
+ *     through-wall axis gets a **direction** test — has the actor passed the
+ *     inset edge on the side this door is on? — not a proximity test. */
 export function stepPosition(
   house: House, room: RoomId, from: Vec2, delta: Vec2,
+  closed: ReadonlySet<DoorId> = new Set(),
 ): StepResult {
   const bounds = roomById(house, room).bounds;
   const desired = { x: from.x + delta.x, y: from.y + delta.y };
+  const inner = inset(bounds, ACTOR_RADIUS);
 
-  if (pointInRect(desired, bounds)) {
+  if (pointInRect(desired, inner)) {
     return { room, at: clampInside(desired, ACTOR_RADIUS, bounds), crossed: null };
   }
 
   for (const door of house.doors) {
     if (door.a !== room && door.b !== room) continue;
+    if (closed.has(door.id)) continue;   // a closed door is a wall
+
+    const throughX = door.at.x < bounds.x || door.at.x > bounds.x + bounds.w;
     const half = door.span / 2;
-    const near = Math.abs(desired.x - door.at.x) <= half
-              && Math.abs(desired.y - door.at.y) <= half;
-    if (!near) continue;
+    const alongOk = throughX
+      ? Math.abs(desired.y - door.at.y) <= half
+      : Math.abs(desired.x - door.at.x) <= half;
+    if (!alongOk) continue;
+
+    const passedThrough = throughX
+      ? (door.at.x < bounds.x ? desired.x < inner.x : desired.x > inner.x + inner.w)
+      : (door.at.y < bounds.y ? desired.y < inner.y : desired.y > inner.y + inner.h);
+    if (!passedThrough) continue;
+
     const to = otherSide(door, room);
     const toBounds = roomById(house, to).bounds;
     return {
@@ -1769,9 +1805,9 @@ describe('hiding', () => {
 Run: `cd v12 && npx vitest run test/doors.test.ts`
 Expected: FAIL — `stepPosition` accepts four arguments, and `toggleDoor` / `beginHide` / `isHidden` / `HIDE_TICKS` do not exist.
 
-- [ ] **Step 3: Add the closed-door parameter to movement**
+- [ ] **Step 3: Confirm the closed-door parameter is already in movement**
 
-In `v12/src/core/movement.ts`, change the signature and add one guard:
+Task 5 shipped `stepPosition` with the fifth parameter and its guard already in place:
 
 ```ts
 export function stepPosition(
@@ -1786,7 +1822,7 @@ and inside the door loop, immediately after `if (door.a !== room && door.b !== r
     if (closed.has(door.id)) continue;   // a closed door is a wall
 ```
 
-The default empty set keeps Task 5's tests passing unchanged.
+**Verify both are present and change nothing if so.** The default empty set is what keeps Task 5's own tests passing. This step exists to confirm, not to re-apply.
 
 - [ ] **Step 4: Add door state and hiding to Sim**
 
