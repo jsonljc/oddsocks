@@ -4546,6 +4546,7 @@ git commit -m "docs: read the gate"
 
 Restating spec §9, because these are the things a well-meaning implementer will add:
 
+- **Snuffing is not yet gated on occupancy.** v12.2 §5 says a lantern "can now be put out by the Odd Sock — **but only if nobody's standing in the light**." Task 6 implements the state flip only. The role half is infeasible in slice 0 (`Actor` has no role field), but **the occupancy half is buildable today** with `lightAt` and `Sim.lightSources()`, and it must land before any task charges a flame per snuff. Tracked here so it is not lost between slices.
 - **No policy bot.** Task 8's stalker is scripted and produces no number. If it grows a heuristic, a score, or a counter, that is a defect.
 - **No economy simulator** for rules §32 Q2/Q3/Q4. A movement model exists now, but it has never been calibrated against a human, so anything built on top of it would measure the model rather than the game.
 - **No networking.** No Colyseus, no WebSocket, no room codes. Slice 2b, behind Gate B.
