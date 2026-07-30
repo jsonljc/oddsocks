@@ -49,7 +49,9 @@ export function createStalker(house: House, id: ActorId, seed: number): Stalker 
       // keeps "the grabber is always slower" true with headroom. The route
       // is left untouched on purpose: canTake requires taker and victim to
       // share a room, so this steers to a point inside the room the stalker
-      // is already in and never crosses a door, so `route` cannot go stale.
+      // is already in and never crosses a door — `route` itself is never
+      // mutated by a chase (which patrol path resumes afterward isn't
+      // asserted by a test, only that patrolling resumes at all).
       if (attempt) {
         const victimId = attempt.victim;
         const victim = sim.state.actors.find(a => a.id === victimId);

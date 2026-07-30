@@ -72,14 +72,13 @@ function pairInDarkRoom(night = 6) {
 }
 
 describe('scripted stalker: the grab', () => {
-  // This is the empirical finding: a first draft of nextInput steered toward
-  // the route's next door unconditionally, even mid-attempt. Measured against
-  // a victim standing at zero distance, contact (CONTACT_RADIUS = 40) broke
-  // by tick 19 — 70-odd ticks short of TAKE_TICKS — and across 3000 ticks
-  // (100 simulated seconds, more than a full 90-second night) no grab ever
-  // completed. Fixed by steering at the attempt's victim instead of the
-  // route while an attempt is live. This test is what "attempts a grab when
-  // the rules already allow one" actually means, made concrete.
+  // A nextInput that steers by route while an attempt is live drags the
+  // taker out of CONTACT_RADIUS (40px) in ~19 ticks — measured, against a
+  // victim standing at zero distance — 70-odd ticks short of TAKE_TICKS, so
+  // across 3000 ticks (100 simulated seconds, more than a full 90-second
+  // night) no grab ever completed. This test is the guard on that: it is
+  // what "attempts a grab when the rules already allow one" actually means,
+  // made concrete.
   it('completes a grab against a stationary victim through its own tick loop', () => {
     const sim = pairInDarkRoom();
     const stalker = createStalker(HOLLOW, 'wren', 7);
