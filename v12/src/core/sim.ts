@@ -1,6 +1,6 @@
 import { makeSink, type ActorId, type EventSink, type LanternId, type MatchEvent } from './events';
 import type { Vec2 } from './geometry';
-import { roomById, type DoorId, type House, type RoomId } from './house';
+import { exitsOf, roomById, type DoorId, type House, type RoomId } from './house';
 import { CARRIED_LANTERN_RADIUS, LANTERN_RADIUS, darkRoomsFor, type LightSource } from './light';
 import { ACTOR_RADIUS, stepPosition } from './movement';
 import { makeRng } from './rng';
@@ -18,12 +18,16 @@ export const CARRY_SLOWDOWN = 0.8;  // rules §10.1 — carrying a lantern is sl
 export const WALK_STEP_TICKS = 18;
 export const RUN_STEP_TICKS = 11;
 
+// rules §9 — how long a hide lasts. See Sim.beginHide for why brief matters.
+export const HIDE_TICKS = 60; // 2s at TICK_HZ
+
 export interface Input { moveX: number; moveY: number; run: boolean }
 
 export interface Actor {
   id: ActorId; room: RoomId; at: Vec2; alive: boolean;
   carrying: 'none' | 'lantern' | 'sock';
   stepCooldown: number;
+  hiddenUntilTick: number; // 0 when not hiding
 }
 
 export type LanternState =
@@ -34,6 +38,7 @@ export interface Lantern { id: LanternId; state: LanternState }
 
 export interface SimState {
   tick: number; night: number; actors: Actor[]; lanterns: Lantern[];
+  closedDoors: Set<DoorId>;
 }
 
 export class Sim {
@@ -56,6 +61,7 @@ export class Sim {
         const b = roomById(this.house, room).bounds;
         return {
           id, room, alive: true, carrying: 'none' as const, stepCooldown: 0,
+          hiddenUntilTick: 0,
           at: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
         };
       }),
@@ -63,6 +69,7 @@ export class Sim {
         { id: 'lantern_a', state: { kind: 'placed', room: 'shared_bedroom', at: { x: 0, y: 0 }, watching: 'd_bed_hearth', lit: true } },
         { id: 'lantern_b', state: { kind: 'placed', room: 'hearth', at: { x: 0, y: 0 }, watching: 'd_hearth_kitchen', lit: true } },
       ],
+      closedDoors: new Set(),
     };
     // Park the starting lanterns at their room centres.
     for (const l of this.state.lanterns) {
@@ -88,7 +95,7 @@ export class Sim {
         x: (input.moveX / len) * speed * DT,
         y: (input.moveY / len) * speed * DT,
       };
-      const result = stepPosition(this.house, actor.room, actor.at, delta);
+      const result = stepPosition(this.house, actor.room, actor.at, delta, this.state.closedDoors);
       actor.at = result.at;
       if (result.crossed) {
         actor.room = result.room;
@@ -137,6 +144,39 @@ export class Sim {
   }
 
   drain(): MatchEvent[] { return this.sink.drain(); }
+
+  isHidden(id: ActorId): boolean {
+    const a = this.state.actors.find(x => x.id === id);
+    return !!a && a.hiddenUntilTick > this.state.tick;
+  }
+
+  /** rules §9 — hide BRIEFLY behind furniture. Brief is the whole point: it
+   *  buys you the length of a Take's warning window and nothing more. */
+  beginHide(id: ActorId): { ok: boolean; reason?: string } {
+    const a = this.state.actors.find(x => x.id === id);
+    if (!a?.alive) return { ok: false, reason: 'no such living actor' };
+    if (a.carrying !== 'none') return { ok: false, reason: 'carrying something' };
+    a.hiddenUntilTick = this.state.tick + HIDE_TICKS;
+    return { ok: true };
+  }
+
+  toggleDoor(actorId: ActorId, doorId: DoorId): { ok: boolean; reason?: string } {
+    const a = this.state.actors.find(x => x.id === actorId);
+    if (!a?.alive) return { ok: false, reason: 'no such living actor' };
+    if (!exitsOf(this.house, a.room).some(d => d.id === doorId)) {
+      return { ok: false, reason: 'that door is not an exit of this room' };
+    }
+    // Set.delete() returns true iff the door WAS closed — i.e. this call is
+    // the one that reopens it. `open` names the state the door is in after
+    // this toggle, for both the emitted event and the caller.
+    const open = this.state.closedDoors.delete(doorId);
+    if (!open) this.state.closedDoors.add(doorId);
+    this.sink.emit({
+      kind: 'door.toggle', tick: this.state.tick, night: this.state.night,
+      actor: actorId, door: doorId, open,
+    });
+    return { ok: true };
+  }
 }
 
 export function createSim(house: House, seed: number, actorIds: ActorId[]): Sim {

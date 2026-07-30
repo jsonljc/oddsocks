@@ -37,9 +37,15 @@ function inset(r: Rect, radius: number): Rect {
  *     satisfy it, and only a fast (run-speed) tick happens to overshoot far
  *     enough to. Walking into the exact same door would soft-lock. So the
  *     through-wall axis gets a direction test instead — has the player passed
- *     the inset edge on the side this door is on? — not a proximity test. */
+ *     the inset edge on the side this door is on? — not a proximity test.
+ *
+ *  `closed` (v12.2 §4 — anyone can open and shut doors) lists doors currently
+ *  shut. A closed door is a wall: the loop below skips it entirely, so a
+ *  desired position that would have crossed it instead falls through to the
+ *  final clamp against the room the actor is still in. */
 export function stepPosition(
   house: House, room: RoomId, from: Vec2, delta: Vec2,
+  closed: ReadonlySet<DoorId> = new Set(),
 ): StepResult {
   const bounds = roomById(house, room).bounds;
   const desired = { x: from.x + delta.x, y: from.y + delta.y };
@@ -51,6 +57,7 @@ export function stepPosition(
 
   for (const door of house.doors) {
     if (door.a !== room && door.b !== room) continue;
+    if (closed.has(door.id)) continue;   // a closed door is a wall
 
     const throughX = door.at.x < bounds.x || door.at.x > bounds.x + bounds.w;
     const half = door.span / 2;
