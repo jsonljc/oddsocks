@@ -3275,6 +3275,18 @@ describe('projectForHouse', () => {
     expect(projectForHouse(l, 3).flamesLost).toBe(0);
   });
 
+  // Carried over from Task 3's review: nothing anywhere uses 'crowd' as a value,
+  // so neither tsc nor vitest would notice it being deleted from FlameReason —
+  // and v12.2 §14's notice is the reason it must stay reachable while staying
+  // unimplemented. This is the guard.
+  it('still accepts a crowd flame in the log, while no code produces one', () => {
+    const p = projectForHouse(log([
+      { kind: 'flame.out', tick: 1, night: 5, reason: 'crowd', remaining: 4 },
+    ]), 5);
+    expect(p.flamesLost).toBe(1);
+    expect(p.flamesRemaining).toBe(4);
+  });
+
   it('reports floor-level sounds without the room that made them', () => {
     const p = projectForHouse(log([
       { kind: 'sound', tick: 4, night: 2, floor: 1, sound: 'take', room: 'attic' },
