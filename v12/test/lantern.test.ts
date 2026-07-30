@@ -19,6 +19,7 @@ describe('lantern actions', () => {
     expect(r.ok).toBe(true);
     expect(sim.state.lanterns[0]!.state).toEqual({ kind: 'held', by: 'bell' });
     expect(sim.state.actors[0]!.carrying).toBe('lantern');
+    expect(sim.drain().some(e => e.kind === 'lantern.carry' && e.lantern === 'lantern_a')).toBe(true);
   });
 
   it('refuses to pick up a lantern in another room', () => {
@@ -84,8 +85,12 @@ describe('lantern actions', () => {
     const sim = simWithActorAt('shared_bedroom');
     expect(applyLanternAction(sim, 'bell', { kind: 'snuff', lantern: 'lantern_a' }).ok).toBe(true);
     expect(sim.lightSources().some(s => s.room === 'shared_bedroom')).toBe(false);
+    // Drain here, before relight — drain() empties the buffer, so a single
+    // drain at the end could only ever see one of the two events.
+    expect(sim.drain().some(e => e.kind === 'lantern.snuff' && e.lantern === 'lantern_a')).toBe(true);
     expect(applyLanternAction(sim, 'bell', { kind: 'relight', lantern: 'lantern_a' }).ok).toBe(true);
     expect(sim.lightSources().some(s => s.room === 'shared_bedroom')).toBe(true);
+    expect(sim.drain().some(e => e.kind === 'lantern.relight' && e.lantern === 'lantern_a')).toBe(true);
   });
 
   it('refuses to snuff or relight a lantern in a different room', () => {
