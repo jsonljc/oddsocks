@@ -43,6 +43,11 @@ describe('overlayAlphaFor', () => {
     for (let n = 1; n <= 6; n++) {
       expect(overlayAlphaFor(n, 'kitchen', allDark)).toBeLessThanOrEqual(MAX_OVERLAY);
       expect(overlayAlphaFor(n, 'kitchen', none)).toBeLessThanOrEqual(MAX_OVERLAY);
+      // Belt-and-suspenders beyond the MAX_OVERLAY-keyed checks above: those two
+      // are silent if the AMBIENT FLOOR moves instead of the cap (e.g. a future
+      // night-6 dark value lower than today's 0.06 — see core/light.ts's own
+      // "worth watching" note on this exact knob). Pin the actual output too.
+      expect(overlayAlphaFor(n, 'kitchen', allDark)).toBeLessThanOrEqual(0.9);
     }
     expect(MAX_OVERLAY).toBeLessThanOrEqual(0.95);
   });
