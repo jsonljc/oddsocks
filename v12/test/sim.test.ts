@@ -1,6 +1,7 @@
-import { createSim, type Input } from '../src/core/sim';
+import { createSim, CARRY_SLOWDOWN, type Input } from '../src/core/sim';
 import { HOLLOW } from '../src/house/hollow';
 import { roomById } from '../src/core/house';
+import { LANTERN_RADIUS, CARRIED_LANTERN_RADIUS } from '../src/core/light';
 import { makeRng } from '../src/core/rng';
 
 const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
@@ -104,5 +105,69 @@ describe('sim', () => {
     }
     const enters = sim.drain().filter(e => e.kind === 'move.enter');
     expect(enters.length).toBeGreaterThan(0);
+  });
+
+  // rules §10.1 — carrying a lantern is slower. CARRY_SLOWDOWN was defined
+  // but nothing exercised the multiplier: an actor could carry a lantern and
+  // get the full discount, half of it, or none, and every other test would
+  // still pass. Two sims from the same seed start identical; only one actor
+  // carries, so any difference in one tick's displacement is the multiplier.
+  it('moves at CARRY_SLOWDOWN of normal speed while carrying a lantern', () => {
+    const plain = createSim(HOLLOW, 42, IDS);
+    const laden = createSim(HOLLOW, 42, IDS);
+    const start = plain.state.actors[0]!.at.x;
+    expect(laden.state.actors[0]!.at.x).toBe(start); // same seed, same start position
+
+    laden.state.actors[0]!.carrying = 'lantern';
+    plain.step(new Map([[plain.state.actors[0]!.id, { moveX: 1, moveY: 0, run: false }]]));
+    laden.step(new Map([[laden.state.actors[0]!.id, { moveX: 1, moveY: 0, run: false }]]));
+
+    const plainDelta = plain.state.actors[0]!.at.x - start;
+    const ladenDelta = laden.state.actors[0]!.at.x - start;
+    expect(plainDelta).toBeGreaterThan(0);
+    expect(ladenDelta).toBeCloseTo(plainDelta * CARRY_SLOWDOWN);
+  });
+});
+
+describe('lightSources', () => {
+  it('includes a placed, lit lantern at its own room, position and radius', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const hearth = roomById(HOLLOW, 'hearth');
+    const centre = { x: hearth.bounds.x + hearth.bounds.w / 2, y: hearth.bounds.y + hearth.bounds.h / 2 };
+    // lantern_b starts placed+lit in the hearth — no setup needed to see it.
+    const source = sim.lightSources().find(s => s.room === 'hearth');
+    expect(source).toEqual({ room: 'hearth', at: centre, radius: LANTERN_RADIUS });
+  });
+
+  it('excludes a placed lantern once it is not lit', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const lantern = sim.state.lanterns.find(l => l.id === 'lantern_b')!; // placed in the hearth
+    if (lantern.state.kind !== 'placed') throw new Error('fixture assumption broken');
+    lantern.state.lit = false;
+    const sources = sim.lightSources();
+    expect(sources.some(s => s.room === 'hearth')).toBe(false);
+    // the other starting lantern is untouched and still lights its own room —
+    // this isn't just "lit toggled off everywhere".
+    expect(sources.some(s => s.room === 'shared_bedroom')).toBe(true);
+  });
+
+  it('includes a lantern held by a living actor, at the holder and the carried radius', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const holder = sim.state.actors[0]!;
+    holder.room = 'kitchen';
+    holder.at = { x: 111, y: 222 };
+    sim.state.lanterns[0]!.state = { kind: 'held', by: holder.id };
+
+    const source = sim.lightSources().find(s => s.radius === CARRIED_LANTERN_RADIUS);
+    expect(source).toEqual({ room: 'kitchen', at: { x: 111, y: 222 }, radius: CARRIED_LANTERN_RADIUS });
+  });
+
+  it('excludes a lantern held by a dead actor', () => {
+    const sim = createSim(HOLLOW, 42, IDS);
+    const holder = sim.state.actors[0]!;
+    sim.state.lanterns[0]!.state = { kind: 'held', by: holder.id };
+    holder.alive = false;
+
+    expect(sim.lightSources().some(s => s.radius === CARRIED_LANTERN_RADIUS)).toBe(false);
   });
 });
