@@ -67,12 +67,30 @@ export type TakeTick = 'warned' | 'progressing' | 'broken' | 'complete';
 export class TakeAttempt {
   private elapsed = 0;
   private done = false;
+  private broken = false;
   constructor(readonly taker: ActorId, readonly victim: ActorId) {}
 
   tick(sim: Sim): TakeTick {
     if (this.done) return 'complete';
+
+    // v12.2 §4 — "Reaching lantern light SAVES you. So does someone else
+    // walking in." Once broken, an attempt is dead and stays dead; the taker
+    // must call beginTake() again and start the three seconds over.
+    //
+    // Without this latch the escape only PAUSES the grab: `elapsed` survives,
+    // so a victim who reaches light on tick 89 and loses it again is taken on
+    // the very next tick of contact — one tick instead of ninety. Escaping
+    // would leave you worse off than never having been noticed, which inverts
+    // the rule. Measured before this latch existed: baseline completed on tick
+    // 90; escape-then-return completed on the tick after the escape.
+    if (this.broken) return 'broken';
+
     const check = canTake(sim, this.taker, this.victim);
-    if (!check.ok) { sim.setGrabbing(this.taker, false); return 'broken'; }
+    if (!check.ok) {
+      this.broken = true;
+      sim.setGrabbing(this.taker, false);
+      return 'broken';
+    }
 
     // v12.2 §4 — "While the Odd Sock is grabbing you, they move slower than you
     // do. So running actually works." The penalty must be live for the whole

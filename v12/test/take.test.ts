@@ -2,6 +2,7 @@ import { createSim } from '../src/core/sim';
 import { applyLanternAction } from '../src/core/lantern';
 import { canTake, beginTake, TAKE_TICKS, WARN_AT_TICKS } from '../src/core/take';
 import { dist } from '../src/core/geometry';
+import { exitsOf } from '../src/core/house';
 import { HOLLOW } from '../src/house/hollow';
 
 const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
@@ -84,7 +85,7 @@ describe('canTake', () => {
     const sim = pairInDarkRoom();
     expect(canTake(sim, 'wren', 'pike').ok).toBe(true);
     sim.beginHide('pike');
-    expect(canTake(sim, 'wren', 'pike').ok).toBe(false);
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'out-of-contact' });
   });
 
   // A hidden child must not also count as the witness that protects someone
@@ -125,12 +126,32 @@ describe('TakeAttempt', () => {
     expect(attempt.tick(sim)).toBe('broken');
   });
 
+  // Ticks TAKE_TICKS + 5 times (not just TAKE_TICKS) specifically so the
+  // "exactly once" claim is checked past completion, not just at it — and so
+  // the trailing assertions below observe several stale ticks, not one.
   it('kills the victim and emits take.complete exactly once', () => {
     const sim = pairInDarkRoom();
     const attempt = beginTake('wren', 'pike');
-    for (let i = 0; i < TAKE_TICKS + 5; i++) attempt.tick(sim);
+    let last: string = 'progressing';
+    for (let i = 0; i < TAKE_TICKS + 5; i++) last = attempt.tick(sim);
     expect(sim.state.actors.find(a => a.id === 'pike')!.alive).toBe(false);
     expect(sim.drain().filter(e => e.kind === 'take.complete')).toHaveLength(1);
+
+    // The `done` latch's actual job: once complete, ticking further must keep
+    // reporting 'complete', not fall through to canTake (which would now see
+    // a dead victim and report 'broken' instead — a lie, since nothing broke;
+    // the Take had already succeeded). Mutation-tested: removing `this.done =
+    // true` does NOT fail the two assertions above (victim.alive and the
+    // event count are both already correct by the completing tick, via the
+    // canTake alive-check's own protection against a second emit) — only this
+    // assertion catches that mutation.
+    expect(last).toBe('complete');
+
+    // The grab-speed penalty must not survive a successful Take either.
+    // Mutation-tested: removing `sim.setGrabbing(this.taker, false)` from the
+    // completion branch made every other test in the whole suite stay green
+    // — this line is the only one that catches it.
+    expect(sim.state.actors.find(a => a.id === 'wren')!.grabbing).toBe(false);
   });
 
   // v12.2 §4 — "While the Odd Sock is grabbing you, they move slower than you do.
@@ -169,6 +190,45 @@ describe('TakeAttempt', () => {
       sim.state.actors.find(a => a.id === 'wren')!.at,
       sim.state.actors.find(a => a.id === 'pike')!.at);
     expect(after).toBeGreaterThan(before);
+  });
+
+  // v12.2 §4 — "Reaching lantern light saves you." Saves, not delays. This is
+  // the test that proves escaping is not merely a pause.
+  it('stays broken once broken, even if the interruption goes away', () => {
+    const sim = pairInDarkRoom();
+    const attempt = beginTake('wren', 'pike');
+    for (let i = 0; i < TAKE_TICKS - 1; i++) attempt.tick(sim);
+
+    const victim = sim.state.actors.find(a => a.id === 'pike')!;
+    const lantern = sim.state.lanterns[0]!;
+    lantern.state = {
+      kind: 'placed', room: victim.room, at: { ...victim.at },
+      watching: exitsOf(HOLLOW, victim.room)[0]!.id, lit: true,
+    };
+    expect(attempt.tick(sim)).toBe('broken');
+
+    // The light goes out again. The grab must NOT pick up where it left off.
+    (lantern.state as { lit: boolean }).lit = false;
+    expect(attempt.tick(sim)).toBe('broken');
+    expect(victim.alive).toBe(true);
+
+    // This second tick is the latched-broken early return itself (`if
+    // (this.broken) return 'broken'`), not the tick that set the latch. The
+    // speed penalty must stay cleared through it too, or a taker who keeps
+    // getting ticked after breaking (e.g. a caller that doesn't immediately
+    // discard a broken attempt) stays slowed forever. Mutation-tested: a
+    // version that (re)sets `grabbing` unconditionally at the top of `tick()`
+    // is missed by every other test in this file — including "clears the
+    // penalty when the attempt breaks", which only ticks twice and never
+    // revisits an already-broken attempt — and is caught only by this line.
+    expect(sim.state.actors.find(a => a.id === 'wren')!.grabbing).toBe(false);
+
+    // A fresh attempt has to serve the full duration over again.
+    const second = beginTake('wren', 'pike');
+    for (let i = 0; i < TAKE_TICKS - 1; i++) {
+      expect(second.tick(sim)).not.toBe('complete');
+    }
+    expect(second.tick(sim)).toBe('complete');
   });
 
   it('clears the penalty when the attempt breaks', () => {
