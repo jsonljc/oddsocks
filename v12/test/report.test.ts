@@ -118,4 +118,23 @@ describe('renderReport', () => {
     expect(renderReport(projectForHouse(log([]), 4), HOLLOW).join('\n'))
       .not.toMatch(/midnight/i);
   });
+
+  // Found by the advisor, empirically confirmed before fixing: the fallback
+  // keyed on `lines.length === 1` alone, so a night whose ONLY event is a
+  // flame going out (e.g. reason 'wrong-call', which has no corresponding
+  // take.complete/lantern.snuff event to populate anything else — Task 12's
+  // Concern 5 records that Task 14's fixture needs exactly one such night)
+  // rendered "One flame went out. 4 remain." immediately followed by "The
+  // house stayed dark. The house saw nothing." in the next line — the honest
+  // narrator stating a falsehood, the same defect shape as Task 12's
+  // "Nobody moved the lantern" finding. The fallback must also require that
+  // no flame was lost, not merely that only one line printed.
+  it('does not claim it saw nothing on a night a flame went out for no other reason', () => {
+    const lines = renderReport(projectForHouse(log([
+      { kind: 'flame.out', tick: 1, night: 2, reason: 'wrong-call', remaining: 4 },
+    ]), 2), HOLLOW);
+    const text = lines.join('\n');
+    expect(text).toMatch(/One flame went out\. 4 remain\./);
+    expect(text).not.toMatch(/saw nothing|stayed dark/i);
+  });
 });

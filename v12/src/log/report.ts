@@ -83,10 +83,17 @@ export function renderReport(p: HouseProjection, house: House): string[] {
   if (p.crowded) lines.push('The children crowded together.');
 
   // The flame line always prints (first push above, unconditional), so
-  // "nothing else happened at all" means exactly one line survived every
-  // other conditional push above it. This depends on the flame line staying
-  // unconditional and singular — if it is ever split across two lines or
-  // made conditional, this check needs to change with it.
-  if (lines.length === 1) lines.push('The house stayed dark. The house saw nothing.');
+  // "nothing ELSE happened" means exactly one line survived every other
+  // conditional push above it — but that one line is not always silent: a
+  // night whose only event is a flame going out (e.g. reason 'wrong-call',
+  // which has no take.complete/lantern.snuff/sound counterpart to populate
+  // anything else) still leaves `lines.length === 1`, and reporting "the
+  // house saw nothing" in the very next line would contradict the flame line
+  // above it — the referee stating a falsehood. So this fallback also
+  // requires `flamesLost === 0`, not just a lone surviving line. (Found by
+  // review; see task-13-report.md.)
+  if (lines.length === 1 && p.flamesLost === 0) {
+    lines.push('The house stayed dark. The house saw nothing.');
+  }
   return lines;
 }
