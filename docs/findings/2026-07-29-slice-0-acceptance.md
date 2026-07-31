@@ -108,6 +108,16 @@ What the agent did verify:
   prerequisite for this criterion to be checkable at all, since a house with one moving body has
   almost nothing to hear.
 
+**If this criterion fails, check the volume arithmetic before suspecting `audibleVolume`.** A
+careful (non-hurried) footstep heard from an adjacent room multiplies out to: the generated WAV's
+own gain (0.5, baked into `step.wav`) × `soundFor`'s volume for a careful step (0.3) ×
+`audibleVolume`'s adjacent-room attenuation (0.45) ≈ **0.0675 of full scale** (about −23 dBFS).
+That is likely audible on headphones in a quiet room and marginal on laptop speakers. If a
+neighbour can't be heard, the fix is almost certainly **raising the gain in
+`gen-sfx.mjs`-equivalent WAV regeneration** (or the volumes in `soundFor`), not `audibleVolume`
+itself — the cross-room model is unit tested and structurally doing what it says. A hurried
+footstep is louder (0.5 × 0.5 × 0.45 ≈ 0.1125, about −19 dBFS) but still quiet by the same margin.
+
 ## Criterion 4 — A placed lantern visibly changes what is knowable about a doorway
 
 - [ ] **UNANSWERED — awaiting human.**
@@ -163,8 +173,13 @@ completing — that is correct §7 "witness" behaviour, not a regression.
 
 ```
 Test Files  16 passed (16)
-     Tests  142 passed (142)
+     Tests  141 passed (141)
 ```
+
+(141, not the 142 this agent first reported: a second advisor pass found two byte-identical tests
+in `test/sounds.test.ts` — same inputs, same expectation, different names — left over from
+restructuring a test case without checking the original still earned its place. Removed the
+duplicate in a follow-up commit; nothing else changed.)
 
 Includes `test/sim.test.ts`'s `describe('determinism')` block (byte-identical event stream for
 the same seed/inputs; diverges for a different seed; actually exercises room crossings, not just
@@ -179,12 +194,20 @@ This is the one criterion the agent ran itself, start to finish, and is confiden
 - Start the dev server (`cd v12 && npm run dev`) in a normal, focused, foreground browser tab —
   the frozen-ticker problem above is specific to the sandboxed automation tool and should not
   occur for you.
-- Try both `?night=1` (mostly lit, to learn the house) and `?night=6` (nearly the whole house
-  dark except the Hearth — only the Hearth is exempt from darkness on night six with the current
+- Try `?night=1` (mostly lit, to learn the house) and `?night=6` (nearly the whole house dark
+  except the Hearth — only the Hearth is exempt from darkness on night six with the current
   `DARK_ROOM_COUNT_BY_NIGHT` table, so criterion 2 needs a room other than the Hearth).
+- **For criterion 2's "a dark room and a faintly lit one must look different from a doorway"**
+  (the property `overlayAlphaFor`'s own docstring calls "the whole point of slice 0"): neither
+  `?night=1` nor `?night=6` actually presents a usable mix to judge that contrast against — night
+  one has only 3 of 11 non-Hearth rooms dark, and night six has all 11. Use **`?night=3` or
+  `?night=4`** instead (7 and 9 of 11 dark, respectively) to stand in a doorway and compare a dark
+  room against a lit one side by side.
 - Controls: **WASD/arrows** move, **Shift** runs, **E** picks up a lantern, **Q** places one
   (watching the nearest door), **F** toggles the nearest door, **C** hides.
 - If criterion 2 fails in a room that is genuinely dark tonight, the brief says to tune
   `DARK_AMBIENT_BY_NIGHT`/`MAX_OVERLAY`, never the criterion itself.
 - If criterion 3 fails, treat it as serious — per the brief, it means the game has no cross-room
-  perception at all, not a tuning problem.
+  perception at all, not a tuning problem. But check the volume arithmetic under criterion 3
+  above first: a careful footstep next door is quiet by design (~−23 dBFS), and the likely knob is
+  cue gain, not `audibleVolume`.

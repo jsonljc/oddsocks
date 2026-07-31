@@ -99,18 +99,22 @@ export function runNightScene(stage: Stage, seed: number, night: number): void {
   const names = new Container();
   stage.world.addChild(actors, names);
 
-  // Absorbs ordinary frame jitter without letting a long real-world gap
-  // replay as a burst of simulated ticks. Found empirically while verifying
-  // this task in a browser: a backgrounded tab's requestAnimationFrame can
-  // be suspended for seconds to indefinitely (measured directly — 0 rAF
-  // callbacks in 500ms — see the report), so on resume `ticker.deltaMS`
-  // reflects the whole gap. Uncapped, the `while` loop below would replay
-  // that entire gap as consecutive ticks in one synchronous burst — which
-  // could complete an ENTIRE in-progress Take (its 1s warning and 3s
-  // duration both) with zero real-world reaction time the instant the tab
-  // regains focus, the exact opposite of v12.2 §4's "you get a warning
-  // first... a real one." Capped at 15 ticks (0.5s) of catch-up: generous
-  // for a dropped frame or two, nowhere near enough to swallow a whole Take.
+  // Belt-and-braces against a value Pixi's own Ticker already clamps: its
+  // `update()` (node_modules/pixi.js/lib/ticker/Ticker.js) caps the raw
+  // elapsed time to `_maxElapsedMS` (100ms by default) BEFORE `deltaMS` is
+  // ever set — confirmed by reading that source, not assumed — so a
+  // backgrounded tab's suspended requestAnimationFrame (this task's own
+  // verification hit exactly that: 0 callbacks measured in a 500ms window)
+  // cannot make a single callback's `ticker.deltaMS` exceed 100ms, and the
+  // `while` loop below therefore can never process more than a handful of
+  // ticks per callback regardless of how long the real-world gap was. So the
+  // dramatic failure mode this comment originally claimed — replaying
+  // minutes of missed ticks as one burst, silently completing an in-progress
+  // Take with no reaction time — is not actually reachable through this
+  // path; Pixi already prevents it upstream. This cap is kept anyway as
+  // cheap insurance against a future change to the ticker's own
+  // configuration (e.g. a raised `minFPS`/`_maxElapsedMS`), not as a fix for
+  // a live defect.
   const MAX_CATCHUP = DT * 15;
   let accumulator = 0;
   let lastAction: string | null = null;

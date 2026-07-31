@@ -111,12 +111,6 @@ describe('audibleVolume', () => {
     expect(audibleVolume(stepInBedroom, 'attic', HOLLOW)).toBe(0.45);
   });
 
-  // rules §7 — a Take's noise is heard "on that floor", generalised here to
-  // every event kind: same floor but not adjacent still carries, faintly.
-  it('does not carry at all to a different, non-adjacent floor', () => {
-    expect(audibleVolume(step, 'attic', HOLLOW)).toBe(0);
-  });
-
   // Every event kind soundFor actually maps to a cue carries a `room` field
   // today (door.toggle gained one in this task), so this branch is
   // unreachable via the real soundFor -> playCue pipeline — flame.out is the
