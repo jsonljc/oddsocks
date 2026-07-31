@@ -108,6 +108,24 @@ describe('projectForHouse', () => {
     expect(rec.crossings).toBe(0);
   });
 
+  // The symmetric case (advisor review, post-implementation): a crossing
+  // AFTER the lantern is carried away must not count either. The window
+  // model's `strictlyBefore(at, w.end)` check covers this, but nothing
+  // previously pinned it directly — the before-placement test above and
+  // SIX_NIGHT_MATCH's carry-and-re-place case both leave this side
+  // unexercised (SIX_NIGHT_MATCH's night-three carry at tick 360 has no
+  // crossing after it).
+  it('does not count a crossing that happened after the lantern was carried away', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 1, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 5, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_playroom' },
+      { kind: 'lantern.carry', tick: 10, night: 3, actor: 'moss', lantern: 'lantern_a', room: 'music_room' },
+      { kind: 'move.enter', tick: 15, night: 3, actor: 'sparrow', room: 'playroom', via: 'd_music_playroom' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
+    expect(rec.crossings).toBe(1);
+  });
+
   // The naive fix for item 4 — "count crossings after the lantern's most
   // recent place event" — breaks this case: SIX_NIGHT_MATCH's night three
   // places lantern_b at tick 340, sees two real crossings at 345/350, THEN

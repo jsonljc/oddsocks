@@ -90,10 +90,11 @@ export function audibleVolume(
  *  Fixed with a small per-file pool instead: at most `AUDIO_POOL_SIZE`
  *  elements are ever constructed for a given cue file; an idle (not
  *  currently playing) element is reused before a new one is built, and once
- *  a file's pool is full, the oldest-claimed slot is reclaimed round-robin
- *  rather than growing the pool without bound. Different cue files never
- *  share a slot, so two distinct sounds overlapping (a door and a step, say)
- *  can't cut each other off.
+ *  a file's pool is full, slots are reclaimed in simple rotation (NOT
+ *  least-recently-claimed — see `acquireAudio`'s own comment) rather than
+ *  growing the pool without bound. Different cue files never share a slot,
+ *  so two distinct sounds overlapping (a door and a step, say) can't cut
+ *  each other off.
  *
  *  Still untested past the constructor/`.play()` boundary: `Audio` is a
  *  browser global with no Node equivalent (same category as
@@ -107,6 +108,13 @@ export function audibleVolume(
  *  listening/reading the network panel, per the note this replaced. */
 const AUDIO_POOL_SIZE = 4;
 const audioPools = new Map<string, HTMLAudioElement[]>();
+// Rotation counter per file — an index only, always read modulo that file's
+// pool length (never stored or compared directly), so its own unbounded
+// growth is harmless: the key set is bounded by the number of distinct cue
+// files (8, per SOUND_FILES), and no plausible session length overflows a
+// JS number used only as a rotating index. Flagged explicitly because this
+// item was specifically about an unbounded allocation, and a Map that only
+// ever grows deserves a sentence saying why THIS one is fine.
 const nextReclaim = new Map<string, number>();
 
 function acquireAudio(file: string): HTMLAudioElement {
@@ -122,8 +130,14 @@ function acquireAudio(file: string): HTMLAudioElement {
     return a;
   }
 
-  // Every pooled element for this file is mid-playback. Reclaim round-robin
-  // (not always the same slot) rather than let the pool grow unbounded.
+  // Every pooled element for this file is mid-playback. Reclaim in simple
+  // rotation — slot 0, then 1, then 2, ... wrapping — rather than let the
+  // pool grow unbounded. This is rotation, NOT least-recently-claimed: after
+  // reclaiming slot i, slot i+1 is next regardless of when it was last
+  // claimed, so a burst of same-file cues can reclaim a slot that started a
+  // moment ago while an older one sits untouched. Acceptable for short SFX
+  // cues on a 4-slot pool; a real LRU would cost more code for a difference
+  // no test here (or ear, in Node) can observe.
   const i = (nextReclaim.get(file) ?? 0) % pool.length;
   nextReclaim.set(file, i + 1);
   return pool[i]!;
