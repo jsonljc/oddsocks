@@ -1,6 +1,6 @@
 import type { ActorId } from './events';
 import { dist } from './geometry';
-import { DARK_ENOUGH_FOR_TAKE, LANTERN_RADIUS, lightAt } from './light';
+import { CARRIED_LANTERN_RADIUS, DARK_ENOUGH_FOR_TAKE, LANTERN_RADIUS, lightAt } from './light';
 import type { Sim } from './sim';
 
 export const CONTACT_RADIUS = 40;
@@ -36,14 +36,45 @@ export function canTake(sim: Sim, takerId: ActorId, victimId: ActorId): TakeChec
   if (taker.room !== victim.room) return { ok: false, reason: 'out-of-contact' };
   if (dist(taker.at, victim.at) > CONTACT_RADIUS) return { ok: false, reason: 'out-of-contact' };
 
-  // rules §10.2 — a placed lantern prevents Takes inside its radius. Checked
-  // before ambient so the two blocks stay distinguishable to the caller: the
-  // UI needs to say WHICH rule stopped you, or the rule cannot be learned.
+  // rules §7 — a Take needs "the target outside lantern light", which is not
+  // conditional on that lantern being on the floor: a CARRIED lantern lights
+  // its holder's surroundings too (Sim.lightSources treats a held lantern as
+  // a light source exactly like a placed one — see core/sim.ts). This loop
+  // used to inspect only `kind === 'placed'`, so a taker holding a lit
+  // lantern got no radius check at all — and since CARRIED_LANTERN_RADIUS
+  // (45) is bigger than CONTACT_RADIUS (40), every take attempt while
+  // carrying a lit lantern has the victim within it (d <= 40 < 45), an
+  // annulus (d in (38.97, 40]) where the `too-lit` ambient check below is too
+  // coarse to catch it (level stays under DARK_ENOUGH_FOR_TAKE there). Found
+  // in the slice-0/1 final review; see test/take.test.ts's "inside the
+  // too-lit check's blind spot".
+  //
+  // Checked before ambient, same as the placed branch: the UI needs to say
+  // WHICH rule stopped you, or the rule cannot be learned.
+  //
+  // Deliberately checks EVERY holder, not only the taker: "the target
+  // outside lantern light" doesn't say whose lantern, and the placed branch
+  // above already doesn't care who set a placed lantern down. A bystander's
+  // carried lantern protects a victim the same way the taker's own would.
   for (const l of sim.state.lanterns) {
-    if (l.state.kind !== 'placed' || !l.state.lit) continue;
-    if (l.state.room !== victim.room) continue;
-    if (dist(l.state.at, victim.at) < LANTERN_RADIUS) {
-      return { ok: false, reason: 'lantern-protected' };
+    if (l.state.kind === 'placed') {
+      if (!l.state.lit) continue;
+      if (l.state.room !== victim.room) continue;
+      if (dist(l.state.at, victim.at) < LANTERN_RADIUS) {
+        return { ok: false, reason: 'lantern-protected' };
+      }
+    } else {
+      // Read `by` into a local first: narrowing `l.state` to the 'held'
+      // member doesn't survive into the closure passed to `.find()` below,
+      // since TS can't prove the property hasn't changed by the time that
+      // callback runs — a plain local const does survive.
+      const by = l.state.by;
+      const holder = sim.state.actors.find(a => a.id === by);
+      if (!holder?.alive) continue;
+      if (holder.room !== victim.room) continue;
+      if (dist(holder.at, victim.at) < CARRIED_LANTERN_RADIUS) {
+        return { ok: false, reason: 'lantern-protected' };
+      }
     }
   }
 

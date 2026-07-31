@@ -55,6 +55,34 @@ describe('canTake', () => {
     expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'lantern-protected' });
   });
 
+  // CRITICAL FIX (slice-0/1 final review, item 5) — v12.2 §7 requires the
+  // target be "outside lantern light" for a grab, and that has to cover a
+  // CARRIED lantern too, not just a placed one: the protection loop below
+  // used to inspect only `kind === 'placed'`, so a taker holding a lit
+  // lantern got no protection check at all. Because CARRIED_LANTERN_RADIUS
+  // (45) is bigger than CONTACT_RADIUS (40), and 1-(d/45)^2 < 0.25 (the
+  // too-lit threshold) for any d > 38.97, there was a real annulus —
+  // d in (38.97, 40] — where a taker carrying a lit lantern could complete a
+  // grab: too dim to trip `too-lit`, but well inside their own lantern's
+  // light. Picks the lantern up through the real applyLanternAction path
+  // (not by constructing 'held' state by hand), matching how the review
+  // verified it was reachable.
+  it('refuses when the taker is carrying a lit lantern, inside the too-lit check\'s blind spot', () => {
+    const sim = pairInDarkRoom();
+    const wren = sim.state.actors.find(a => a.id === 'wren')!;
+    const pike = sim.state.actors.find(a => a.id === 'pike')!;
+    sim.state.lanterns[0]!.state = {
+      kind: 'placed', room: 'attic', at: { ...wren.at }, watching: 'd_attic_playroom', lit: true,
+    };
+    expect(applyLanternAction(sim, 'wren', { kind: 'pickup', lantern: 'lantern_a' }).ok).toBe(true);
+
+    // d = 39.5 sits inside (38.97, 40]: `too-lit` alone would miss it
+    // (level < DARK_ENOUGH_FOR_TAKE), but the victim is inside the carried
+    // lantern's own radius (39.5 < CARRIED_LANTERN_RADIUS 45).
+    pike.at = { x: wren.at.x + 39.5, y: wren.at.y };
+    expect(canTake(sim, 'wren', 'pike')).toEqual({ ok: false, reason: 'lantern-protected' });
+  });
+
   // rules §12.1 — no second living child close enough to intervene
   it('refuses when a third living child is close enough to intervene', () => {
     const sim = pairInDarkRoom();
