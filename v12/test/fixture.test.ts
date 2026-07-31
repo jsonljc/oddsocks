@@ -9,6 +9,13 @@ describe('SIX_NIGHT_MATCH', () => {
     expect(new Set(SIX_NIGHT_MATCH.events.map(e => e.night))).toEqual(new Set([1, 2, 3, 4, 5, 6]));
   });
 
+  // This assertion cannot fail against any fixture: report.ts pushes the
+  // flame-count line unconditionally, first, before any per-night content is
+  // evaluated, so lines.length >= 1 holds for every projection regardless of
+  // what SIX_NIGHT_MATCH contains. This test exists so that invariant has
+  // somewhere to live, not because the assertion below discriminates
+  // anything about the fixture (same shape as project.test.ts's 'crowd'
+  // guard test and its own comment explaining the same thing).
   it('renders a non-empty report for every night', () => {
     for (let n = 1; n <= 6; n++) {
       expect(renderReport(projectForHouse(SIX_NIGHT_MATCH, n), HOLLOW).length,
@@ -34,6 +41,15 @@ describe('SIX_NIGHT_MATCH', () => {
     for (const e of SIX_NIGHT_MATCH.events) {
       if ('room' in e && e.room) expect(rooms, JSON.stringify(e)).toContain(e.room);
       if ('via' in e && e.via) expect(doors, JSON.stringify(e)).toContain(e.via);
+    }
+    // RoomId (core/house.ts) is a plain string alias, so a typo'd claim room
+    // is not a compile error either, and SIX_NIGHT_CLAIMS was unchecked by
+    // anything until this loop was added — review found that injecting
+    // 'nonexistent_room' into a claim left both tsc and this file green.
+    // Claims never carry a door field (schema.ts's Claim union has no `via`),
+    // so only `room` needs checking here.
+    for (const c of SIX_NIGHT_CLAIMS) {
+      if ('room' in c && c.room) expect(rooms, JSON.stringify(c)).toContain(c.room);
     }
   });
 
