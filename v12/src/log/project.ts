@@ -55,16 +55,30 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
   // every quiet night. This repository has made exactly this stock-for-flow
   // substitution before; do not collapse these two loops.
   //
-  // Math.min, not a plain overwrite: flames only ever go out (v12.2 §7), so
-  // remaining is non-increasing over real time no matter what order a log
-  // lists its events in. A plain overwrite trusts the array's own order to
-  // already be chronological — true of every test fixture above, but not a
-  // safe assumption for Task 14's hand-authored six-night log, and not
-  // something MatchLog's type enforces.
+  // Take the value from whichever qualifying event is CHRONOLOGICALLY LAST
+  // (max by night, then tick), not whichever comes last in the array — a
+  // hand-authored fixture (Task 14 writes one covering six nights) has no
+  // enforced invariant that its array order matches (night, tick) order.
+  //
+  // Deliberately NOT `Math.min(flamesRemaining, e.remaining)`: that would
+  // be equally order-independent (flames only ever go out, v12.2 §7, so
+  // the running minimum is always non-increasing) but it would ALSO
+  // silently repair a genuinely inconsistent fixture — a later event
+  // reporting a higher remaining count than an earlier one, which is an
+  // authoring mistake, not a quiet night. Min can never rise by
+  // construction, which would make Task 14's own "never lets flames
+  // remaining rise across the six nights" test vacuous against any log
+  // whatsoever. This projection reports what the log says at each night,
+  // faithfully, so that check stays meaningful.
   let flamesRemaining = 5;
+  let bestNight = -1;
+  let bestTick = -1;
   for (const e of log.events) {
-    if (e.kind === 'flame.out' && e.night <= night) {
-      flamesRemaining = Math.min(flamesRemaining, e.remaining);
+    if (e.kind !== 'flame.out' || e.night > night) continue;
+    if (e.night > bestNight || (e.night === bestNight && e.tick > bestTick)) {
+      flamesRemaining = e.remaining;
+      bestNight = e.night;
+      bestTick = e.tick;
     }
   }
 

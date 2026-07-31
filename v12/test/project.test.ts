@@ -73,6 +73,24 @@ describe('projectForHouse', () => {
     expect(projectForHouse(l, 3).flamesRemaining).toBe(3);
   });
 
+  // Deliberate design pin, not a hypothetical: order-independence could also
+  // be had by taking the running MINIMUM remaining seen so far (flames only
+  // ever go out, so that is non-increasing too), but a minimum silently
+  // REPAIRS a genuinely inconsistent fixture — it can never rise, by
+  // construction, which would make Task 14's own "never lets flames
+  // remaining rise across the six nights" test vacuous against any log at
+  // all. This projection must report what the log says at each night,
+  // faithfully, so a real authoring mistake stays visible instead of being
+  // quietly smoothed over.
+  it('surfaces a rise rather than repairing it, if the log itself is inconsistent', () => {
+    const l = log([
+      { kind: 'flame.out', tick: 1, night: 3, reason: 'take', remaining: 2 },
+      { kind: 'flame.out', tick: 1, night: 4, reason: 'snuff', remaining: 4 },
+    ]);
+    expect(projectForHouse(l, 3).flamesRemaining).toBe(2);
+    expect(projectForHouse(l, 4).flamesRemaining).toBe(4);
+  });
+
   // Carried over from Task 3's review: nothing anywhere uses 'crowd' as a
   // value, so these runtime assertions pass identically for ANY valid
   // FlameReason — they do not discriminate 'crowd' specifically. What
