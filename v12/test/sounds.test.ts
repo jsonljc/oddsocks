@@ -1,4 +1,4 @@
-import { soundFor, SOUND_FILES, audibleVolume } from '../src/audio/sounds';
+import { soundFor, SOUND_FILES, audibleVolume, playCue } from '../src/audio/sounds';
 import type { MatchEvent } from '../src/core/events';
 import { HOLLOW } from '../src/house/hollow';
 
@@ -120,5 +120,84 @@ describe('audibleVolume', () => {
   it('defaults to full volume for a mapped kind that carries no room', () => {
     const flameOut: MatchEvent = { kind: 'flame.out', tick: 9, night: 3, reason: 'take', remaining: 4 };
     expect(audibleVolume(flameOut, 'kitchen', HOLLOW)).toBe(1);
+  });
+});
+
+// RE-GATED (slice-0/1 final review, item 6) — playCue allocated a fresh,
+// never-released `Audio` per cue: roughly 900 objects a night with all six
+// actors wandering. Deferred at Task 11 with the stated deadline "fix before
+// slice 1"; slice 1 shipped at Task 16, so that deadline had passed.
+//
+// No jsdom/happy-dom is configured (vitest.config.ts: environment: 'node'),
+// so `Audio` is not a real global here — but a plain fake constructor with a
+// counter is enough to test allocation behaviour without needing real media
+// playback, and IS enough to get a real red/green cycle (see below), so this
+// was fixed rather than re-deferred again: carrying a deferral whose gate has
+// already passed, with no new attempt at a fix, is the discard this whole
+// process exists to prevent.
+describe('playCue', () => {
+  // playCue's pool (src/audio/sounds.ts) is module-level state, keyed by cue
+  // file, that persists for the life of the module — i.e. across every test
+  // in this file. A unique fake filename per test (never a real name from
+  // SOUND_FILES, and never reused across tests) is what keeps these tests
+  // independent of each other and of execution order, without needing to
+  // export a test-only reset hook from the production module.
+  let uniqueId = 0;
+  function uniqueFile(): string { return `test-cue-${uniqueId++}.wav`; }
+
+  function withFakeAudio<T>(fn: (constructions: () => number) => T): T {
+    let constructions = 0;
+    class FakeAudio {
+      volume = 1;
+      currentTime = 0;
+      paused = true;
+      constructor(public readonly src: string) { constructions++; }
+      play(): Promise<void> { this.paused = false; return Promise.resolve(); }
+    }
+    const original = (globalThis as { Audio?: unknown }).Audio;
+    (globalThis as { Audio?: unknown }).Audio = FakeAudio;
+    try {
+      return fn(() => constructions);
+    } finally {
+      (globalThis as { Audio?: unknown }).Audio = original;
+    }
+  }
+
+  // The regression: 50 calls for the SAME cue must not allocate 50 Audio
+  // objects. Bounded well below 50 rather than pinned to the exact pool size,
+  // so a legitimate future retune of the pool's capacity doesn't make this
+  // test brittle — the property that matters is "bounded", not "exactly N".
+  it('reuses pooled Audio elements instead of allocating one per call', () => {
+    const file = uniqueFile();
+    withFakeAudio(constructions => {
+      for (let i = 0; i < 50; i++) playCue({ file, volume: 0.5 });
+      expect(constructions()).toBeLessThan(10);
+    });
+  });
+
+  // A pool keyed only by file, with no cap on simultaneous plays, would still
+  // "reuse" by starting a second cue from tick 0 on an element already
+  // mid-playback — cutting the first one off. Two DIFFERENT files must not
+  // share an element regardless: this pins that the pool key is the file,
+  // not a single global slot.
+  it('gives different cue files independent pooled elements', () => {
+    const fileA = uniqueFile();
+    const fileB = uniqueFile();
+    withFakeAudio(constructions => {
+      playCue({ file: fileA, volume: 0.5 });
+      playCue({ file: fileB, volume: 0.5 });
+      expect(constructions()).toBe(2);
+    });
+  });
+
+  // rules §20's placeholder cues must still be silenceable: a cue attenuated
+  // to (near) zero must not even reach the pool/allocate anything, matching
+  // the existing `volume <= 0.01` early return.
+  it('still skips playback entirely below the audible floor', () => {
+    const file = uniqueFile();
+    withFakeAudio(constructions => {
+      playCue({ file, volume: 0.005 });
+      expect(constructions()).toBe(0);
+    });
   });
 });

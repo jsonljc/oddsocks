@@ -79,15 +79,61 @@ export function audibleVolume(
   return 0;
 }
 
-/** Untested past this line: `Audio` is a browser global with no Node
- *  equivalent (same category as render/stage.ts's createStage and
- *  app/input.ts's createInput — the DOM/browser-touching half of a module
- *  whose pure half is tested above). Verified instead by running the scene
- *  and listening/reading the network panel for 200s against v12/public/sfx/. */
+/** RE-GATED then FIXED (slice-0/1 final review, item 6): deferred at Task 11
+ *  with the stated deadline "fix before slice 1"; slice 1 shipped at Task 16
+ *  with the deferral still uncarried and no new gate named, which is exactly
+ *  the silent-discard this process exists to prevent. A fresh, never-released
+ *  `Audio` per cue meant roughly 900 allocations a night once all six actors
+ *  wander (one `new Audio()` — a real network fetch and decode pipeline, not
+ *  a cheap object — per footstep, door, lantern and take cue).
+ *
+ *  Fixed with a small per-file pool instead: at most `AUDIO_POOL_SIZE`
+ *  elements are ever constructed for a given cue file; an idle (not
+ *  currently playing) element is reused before a new one is built, and once
+ *  a file's pool is full, the oldest-claimed slot is reclaimed round-robin
+ *  rather than growing the pool without bound. Different cue files never
+ *  share a slot, so two distinct sounds overlapping (a door and a step, say)
+ *  can't cut each other off.
+ *
+ *  Still untested past the constructor/`.play()` boundary: `Audio` is a
+ *  browser global with no Node equivalent (same category as
+ *  render/stage.ts's createStage and app/input.ts's createInput), and no
+ *  jsdom/happy-dom is configured here (vitest.config.ts: environment:
+ *  'node'). But allocation COUNT is a plain object-pool behaviour, testable
+ *  with a fake `Audio` constructor with no DOM needed — see
+ *  test/sounds.test.ts's `playCue` suite, which is what actually verifies
+ *  this fix (red against the pre-fix unconditional `new Audio()`, green
+ *  after). Real playback stays verified by running the scene and
+ *  listening/reading the network panel, per the note this replaced. */
+const AUDIO_POOL_SIZE = 4;
+const audioPools = new Map<string, HTMLAudioElement[]>();
+const nextReclaim = new Map<string, number>();
+
+function acquireAudio(file: string): HTMLAudioElement {
+  let pool = audioPools.get(file);
+  if (!pool) { pool = []; audioPools.set(file, pool); }
+
+  const idle = pool.find(a => a.paused);
+  if (idle) return idle;
+
+  if (pool.length < AUDIO_POOL_SIZE) {
+    const a = new Audio(`/sfx/${file}`);
+    pool.push(a);
+    return a;
+  }
+
+  // Every pooled element for this file is mid-playback. Reclaim round-robin
+  // (not always the same slot) rather than let the pool grow unbounded.
+  const i = (nextReclaim.get(file) ?? 0) % pool.length;
+  nextReclaim.set(file, i + 1);
+  return pool[i]!;
+}
+
 export function playCue(cue: SoundCue, attenuation = 1): void {
   const volume = cue.volume * attenuation;
   if (volume <= 0.01) return;
-  const a = new Audio(`/sfx/${cue.file}`);
+  const a = acquireAudio(cue.file);
+  a.currentTime = 0;
   a.volume = Math.min(volume, 1);
   void a.play().catch(() => { /* autoplay policy; ignored until first input */ });
 }
