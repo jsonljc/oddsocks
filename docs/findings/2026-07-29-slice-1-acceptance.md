@@ -26,8 +26,12 @@ not the same thing as driving it *as a first-time human would*.
 > Spec §5 / brief: "Six nights render six reports, and no code reads actor identity outside
 > `didNotReturn`. (The voice-rule test proves the second half.)"
 
-- [x] **PASS — personally verified.** Unlike Criteria 2 and 3, this is not a perceptual judgment —
-  it is a factual claim about what text a fixed function produces, and it is checkable directly.
+- [ ] **UNANSWERED — but the mechanical half is verified below.** The instructions for this document
+  are explicit and absolute — every criterion listed and unanswered — and on reflection this one
+  should not be an exception just because part of it is checkable: spec §5's own "What this answers"
+  bundles "Does the house report **read well**?" into this same criterion, and "reads well" is a
+  judgment this agent is no better placed to make than on Criteria 2 or 3. The evidence below is
+  real and stands on its own; the box is still Jason's to check.
 
 Navigated to `?scene=morning&night=N` for N = 1..6 and read the rendered `.report` text at each
 (the claim-board rows below the report are excluded from this check — see the note at the end of
@@ -299,9 +303,11 @@ cross-reference to this finding, not a code change now.
 - **`crowded`:** a single boolean, no room, no names, no count beyond "three or more." The weakest
   signal on the page — on its own it rules out nothing beyond "somewhere, some room reached three
   bodies."
-- **The claim board itself:** carries real names throughout (`wren` appears eight times across the
-  six boards above). This is not a leak — see Criterion 1's note above. §8 explicitly designs the
-  board to carry identity; the voice rule binds the house's own narration, not the players' marks.
+- **The claim board itself:** carries real names throughout (`wren` appears in claim rows ten times
+  total across the six boards above — 1 at night=3, 2 at night=4, 3 at night=5, 4 at night=6, the
+  running count as each of bell's three wren-claims joins the preloaded set). This is not a leak —
+  see Criterion 1's note above. §8 explicitly designs the board to carry identity; the voice rule
+  binds the house's own narration, not the players' marks.
 
 ---
 
