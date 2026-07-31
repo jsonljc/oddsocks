@@ -40,9 +40,12 @@ export function renderReport(p: HouseProjection, house: House): string[] {
 
   // v12.2 §5 — "what the lanterns saw": numbers and rooms, never names.
   // `outward` and `hurried` are deliberately unread here — see the comment at
-  // their construction site in project.ts. They are unpopulated stubs (Task
-  // 12), not a gap this task should silently paper over by inventing text for
-  // them.
+  // their construction site in project.ts. They are OPTIONAL and absent, not
+  // populated stubs (slice-0/1 final review, item 7 — they used to default
+  // to 0/false, which is itself a falsehood: "0 outward crossings" and
+  // "movement was calm" are claims, not "not computed"), so there is nothing
+  // here for this loop to read even by accident. Not a gap this task should
+  // silently paper over by inventing text for them.
   for (const rec of p.lanternRecords) {
     const head = `The ${name(rec.room)} lantern`;
     lines.push(rec.crossings === 0

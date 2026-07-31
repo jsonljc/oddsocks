@@ -36,6 +36,23 @@ describe('projectForHouse', () => {
     expect(JSON.stringify(p.lanternRecords)).not.toContain('moss');
   });
 
+  // CRITICAL FIX (slice-0/1 final review, item 7): `outward: 0` reads as
+  // "zero outward crossings" and `hurried: false` reads as "movement was
+  // calm" — both are claims about the match, not "not computed". Neither is
+  // populated by projectForHouse yet, so they must be ABSENT from the
+  // object, not defaulted, or the house would be asserting a fact nobody
+  // computed — the same falsehood shape as the "nobody moved the lantern"
+  // bug this file already fixed once (see the `moved`-ordering test above).
+  // Same style as the existing "carries no inactivity floor..." test below.
+  it('leaves outward and hurried absent rather than defaulting them to 0/false', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 1, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
+    expect('outward' in rec).toBe(false);
+    expect('hurried' in rec).toBe(false);
+  });
+
   // Task 12 review: the switch loop that builds `watched` used to iterate
   // `nightly` in raw array order, the one place in this function that didn't
   // sort by tick the way flamesRemaining and the crowd fold both do. A

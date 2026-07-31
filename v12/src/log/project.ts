@@ -7,10 +7,27 @@ export type { MatchLog };
 /** A lantern's dawn record, keyed by the room it watched from — not by the
  *  physical lantern object, since the report names the room ("The Music Room
  *  lantern...") and never the lantern itself. `outward` and `hurried` are
- *  part of the shape but are not populated by `projectForHouse` yet; see the
- *  comments at their construction site below for two different reasons why. */
+ *  part of the shape but OPTIONAL, and `projectForHouse` never sets them; see
+ *  the comments at their construction site below for two different reasons
+ *  why neither is populated yet.
+ *
+ *  CRITICAL: they are optional, not defaulted to `0`/`false`, on purpose.
+ *  `outward: 0` reads as "zero outward crossings" and `hurried: false` reads
+ *  as "movement was calm" — both are claims about what happened, not "this
+ *  wasn't computed". §5's own sample line ("Two figures came in. One left in
+ *  a hurry.") shows why that gap matters: a night with real outward traffic
+ *  or a real hurried crossing must not be reportable as "zero, calm" just
+ *  because this projection doesn't populate the field yet. Making them
+ *  optional lets a future implementation mark the difference — genuinely
+ *  computed-and-zero/calm versus not-yet-computed — the moment it exists,
+ *  and lets any caller today tell the difference too (`'outward' in rec` is
+ *  `false`), rather than silently
+ *  asserting a fact about the match that isn't known. This is the same
+ *  falsehood shape as the "nobody moved the lantern" bug this file already
+ *  fixed once (see the `moved` ordering note above). Found in the slice-0/1
+ *  final review. */
 export interface LanternRecord {
-  room: RoomId; crossings: number; outward: number; hurried: boolean; moved: boolean;
+  room: RoomId; crossings: number; outward?: number; hurried?: boolean; moved: boolean;
 }
 
 /** GLOBAL CONSTRAINT: this type is the enforcement mechanism for v12.2 §8's
@@ -230,28 +247,31 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
     }
   }
 
+  // `outward` and `hurried` are DELIBERATELY ABSENT below, not defaulted —
+  // see LanternRecord's docstring for why a default of 0/false would itself
+  // be a falsehood. Two different reasons neither is populated yet:
+  //
+  // `outward` is withheld, and — unlike `hurried` below — NOT because the
+  // data is unavailable. It is one comparison away: e.via === this room's
+  // watched door && e.room !== this room (`applyLanternAction`'s `place`
+  // case guarantees the watched door is one of this room's own exits, so
+  // the other endpoint is always well-defined). It is left unpopulated
+  // because splitting `crossings` into a direction is exactly what design
+  // spec §5 flags as unreviewed: "direction, count, timing and whether
+  // movement was calm or hurried... frequently names the person" with six
+  // players and one watched doorway. `crossings` alone shipped as an
+  // accepted aggregate; a direction on top of it is an open design
+  // question, not an oversight here. See the Task 12 report.
+  //
+  // `hurried` is absent because no event supplies it: `move.enter` carries
+  // no hurried/running flag, and only `step` does. Tying a `step` event's
+  // `hurried` flag to a specific crossing would mean correlating actor and
+  // tick across two different event kinds with nothing in this log to key
+  // that correlation on here — invented semantics, not a read of what the
+  // log actually says.
   const lanternRecords: LanternRecord[] = [...roomsWatchingTonight].map(room => ({
     room,
     crossings: crossingsByRoom.get(room) ?? 0,
-    // `outward` is withheld, and — unlike `hurried` below — NOT because the
-    // data is unavailable. It is one comparison away: e.via === this room's
-    // watched door && e.room !== this room (`applyLanternAction`'s `place`
-    // case guarantees the watched door is one of this room's own exits, so
-    // the other endpoint is always well-defined). It stays 0 because
-    // splitting `crossings` into a direction is exactly what design spec §5
-    // flags as unreviewed: "direction, count, timing and whether movement
-    // was calm or hurried... frequently names the person" with six players
-    // and one watched doorway. `crossings` alone shipped as an accepted
-    // aggregate; a direction on top of it is an open design question, not an
-    // oversight here. See the Task 12 report.
-    outward: 0,
-    // `hurried` stays false because no event supplies it: `move.enter`
-    // carries no hurried/running flag, and only `step` does. Tying a `step`
-    // event's `hurried` flag to a specific crossing would mean correlating
-    // actor and tick across two different event kinds with nothing in this
-    // log to key that correlation on here — invented semantics, not a read
-    // of what the log actually says.
-    hurried: false,
     moved: movedRooms.has(room),
   }));
 
