@@ -35,14 +35,30 @@ function atNight<T>(table: readonly T[], night: number): T {
 
 /** Which rooms are dark on a given night. Deterministic from the match seed, and
  *  **nested** — a room dark on night n is still dark on n+1 — so the house is
- *  learnable rather than re-rolled nightly. */
+ *  learnable rather than re-rolled nightly.
+ *
+ *  CRITICAL: this shuffles the same 11-room candidate list (all rooms minus
+ *  hearth) that `Sim`'s constructor shuffles for the starting-room assignment
+ *  (core/sim.ts). Feeding both from `makeRng(seed)` directly made them the
+ *  SAME permutation, which made this function's dark set exactly a PREFIX of
+ *  the starting-room order — actor slot i started dark on night n iff
+ *  i < DARK_ROOM_COUNT_BY_NIGHT[n-1], for every seed, since a shared generator
+ *  over a shared input always produces a shared output. With night.ts's fixed
+ *  roster (bell = slot 0, wren = slot 3), that meant the human player started
+ *  dark on every seed and the stalker started lit on every seed — measured
+ *  across 8 seeds in the slice-0/1 final review. `seed ^ 0xda2c` decorrelates
+ *  this function's stream from the sim's, the same technique
+ *  test/sim.test.ts already uses (`makeRng(seed ^ 0xabcdef)`) to decorrelate
+ *  its own input stream from the sim it drives. See
+ *  test/light.test.ts's "does not share a stream with the starting-room
+ *  shuffle" for the regression. */
 export function darkRoomsFor(house: House, night: number, seed: number): Set<RoomId> {
   const candidates = house.rooms
     .map(r => r.id)
     .filter(id => !ALWAYS_LIT.includes(id));
 
   // Shuffle once per match, then take a prefix that only grows with the night.
-  const rng = makeRng(seed);
+  const rng = makeRng(seed ^ 0xda2c);
   for (let i = candidates.length - 1; i > 0; i--) {
     const j = rng.int(i + 1);
     [candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!];

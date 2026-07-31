@@ -4,9 +4,75 @@ import {
   DARK_ENOUGH_FOR_TAKE, IDENTIFY_THRESHOLD, LANTERN_RADIUS,
 } from '../src/core/light';
 import { HOLLOW } from '../src/house/hollow';
+import { createSim } from '../src/core/sim';
+import type { RoomId } from '../src/core/house';
 
 const SEED = 4242;
 const dark = (night: number) => darkRoomsFor(HOLLOW, night, SEED);
+
+// CRITICAL FIX (slice-0/1 final review, item 1) — darkRoomsFor and Sim's
+// starting-room assignment both shuffled the SAME 11-room array (all rooms
+// minus hearth) with the SAME Fisher-Yates seeded by the SAME makeRng(seed).
+// Two independent shuffles of the same input with the same generator produce
+// the same permutation, so darkRoomsFor's dark set was always exactly a
+// PREFIX of the starting-room order: actor slot i started dark on night n iff
+// i < DARK_ROOM_COUNT_BY_NIGHT[n-1], regardless of seed. With night.ts's fixed
+// roster (bell = slot 0, wren = slot 3), that meant the human player started
+// dark on EVERY seed and the stalker started lit on EVERY seed — "six
+// randomised starting rooms" was false in the one property that mattered.
+//
+// Fixed by giving darkRoomsFor its own RNG stream (`seed ^ 0xda2c`), the same
+// technique test/sim.test.ts already uses to decorrelate its own input stream
+// from the sim's seed.
+describe('darkRoomsFor does not share a stream with the starting-room shuffle', () => {
+  const IDS = ['bell', 'pike', 'clem', 'wren', 'sparrow', 'moss'];
+  const SEEDS = [1, 2, 3, 42, 4242, 99, 7, 1234];
+
+  // Derived from a REAL Sim, not a re-implementation of its shuffle — so this
+  // test tracks whatever sim.ts's constructor actually does, rather than a
+  // copy of today's algorithm that would go stale (and stay green) the moment
+  // that algorithm changed.
+  function startingOrder(seed: number): RoomId[] {
+    return createSim(HOLLOW, seed, IDS).state.actors.map(a => a.room);
+  }
+
+  // Nights 5-6 schedule 11 dark rooms — the entire candidate pool (11 rooms:
+  // all but the Hearth) — so the dark set trivially equals "the whole
+  // starting order" there regardless of which stream computed it. Nights 1-4
+  // (counts 3/5/7/9) are proper subsets, where prefix-equality is an actual,
+  // falsifiable claim about the two shuffles sharing a stream.
+  it('is not a prefix of the starting-room order on any night with room to spare', () => {
+    for (const seed of SEEDS) {
+      const order = startingOrder(seed);
+      for (const night of [1, 2, 3, 4]) {
+        const darkSet = darkRoomsFor(HOLLOW, night, seed);
+        const count = DARK_ROOM_COUNT_BY_NIGHT[night - 1]!;
+        const prefix = order.slice(0, count);
+        const isPrefix = prefix.length === darkSet.size && prefix.every(r => darkSet.has(r));
+        expect(isPrefix, `seed ${seed} night ${night}: dark set was a prefix of starting order`)
+          .toBe(false);
+      }
+    }
+  });
+
+  // The property the bug actually threatened, made concrete: night one, which
+  // slot starts dark should depend on the seed, not be fixed by slot index
+  // alone. Before the fix, slot 0 (bell in night.ts's roster) was dark on
+  // EVERY one of these seeds and slot 3 (wren) was lit on every one — proven
+  // in the report's mutation check, not just asserted here.
+  it('lets different seeds put different starting slots in the dark on night one', () => {
+    const slot0Dark = SEEDS.map(seed => {
+      const order = startingOrder(seed);
+      return darkRoomsFor(HOLLOW, 1, seed).has(order[0]!);
+    });
+    const slot3Dark = SEEDS.map(seed => {
+      const order = startingOrder(seed);
+      return darkRoomsFor(HOLLOW, 1, seed).has(order[3]!);
+    });
+    expect(new Set(slot0Dark).size, 'slot 0 dark-status is constant across seeds').toBe(2);
+    expect(new Set(slot3Dark).size, 'slot 3 dark-status is constant across seeds').toBe(2);
+  });
+});
 
 describe('darkRoomsFor', () => {
   it('is deterministic for a seed and grows with the night', () => {
