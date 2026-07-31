@@ -56,6 +56,91 @@ describe('projectForHouse', () => {
     expect(rec.moved).toBe(true);
   });
 
+  // CRITICAL FIX (slice-0/1 final review, item 3): `nightly` used to filter
+  // OUT a lantern's own `lantern.place` event whenever it happened on an
+  // earlier night, so a lantern placed once and never touched again dropped
+  // out of every later night's report — measured on SIX_NIGHT_MATCH:
+  // lanternRecords was `[]` on nights 2, 4, 5 and 6, though both lanterns
+  // were placed and standing the whole time. A lantern's placement is a
+  // stock (persists across nights); only its crossings are a flow (reset
+  // each night).
+  it('reports a lantern placed on an earlier night and never touched since (a stock, not a flow)', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 1, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room');
+    expect(rec).toBeDefined();
+    expect(rec!.crossings).toBe(0);
+  });
+
+  // CRITICAL FIX (slice-0/1 final review, item 4): crossings used to be
+  // counted for ANY room with a watched-door record this night, regardless of
+  // whether the crossing happened before or after the lantern was actually
+  // placed. The pre-existing "reduces lantern traffic..." test above cannot
+  // discriminate this in either direction — it places at tick 1 and crosses
+  // at 5/8, so both orderings of "count everything this night" and "count
+  // only after placement" agree. This one can fail: the lantern is placed at
+  // tick 900, long after two crossings of its own future watched door.
+  it('does not count a crossing that happened before the lantern was placed', () => {
+    const p = projectForHouse(log([
+      { kind: 'move.enter', tick: 5, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 6, night: 3, actor: 'moss', room: 'music_room', via: 'd_music_playroom' },
+      { kind: 'lantern.place', tick: 900, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
+    expect(rec.crossings).toBe(0);
+  });
+
+  // The naive fix for item 4 — "count crossings after the lantern's most
+  // recent place event" — breaks this case: SIX_NIGHT_MATCH's night three
+  // places lantern_b at tick 340, sees two real crossings at 345/350, THEN
+  // carries it away (360) and puts it back in the same spot (370). Both
+  // crossings belong to the FIRST placement window, before the carry, and
+  // must still count — "since the last place event" (370) would wrongly
+  // exclude both.
+  it('counts crossings from a placement window that was interrupted by a carry and re-place', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 340, night: 3, actor: 'moss', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 345, night: 3, actor: 'bell', room: 'playroom', via: 'd_music_playroom' },
+      { kind: 'move.enter', tick: 350, night: 3, actor: 'clem', room: 'playroom', via: 'd_music_playroom' },
+      { kind: 'lantern.carry', tick: 360, night: 3, actor: 'moss', lantern: 'lantern_a', room: 'music_room' },
+      { kind: 'lantern.place', tick: 370, night: 3, actor: 'moss', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
+    expect(rec.crossings).toBe(2);
+  });
+
+  // Necessary consequence of the item-3 fix, not scope creep — proven by
+  // mutation, not asserted on faith (see the slice-0/1 final fix report):
+  // building the stock-crossing-nights fix WITHOUT also tracking lit state
+  // made a lantern snuffed on an earlier night and never relit falsely
+  // "watch" a later crossing of its old door. v12.2 §5 says putting a
+  // lantern out "kills" it; a dead lantern cannot see anything until
+  // relit, so it must not appear in a night's report at all once its only
+  // placement has gone dark.
+  it('stops watching once snuffed and never relit, on a later night', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 1, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+      { kind: 'lantern.snuff', tick: 2, night: 1, actor: 'wren', lantern: 'lantern_a', room: 'music_room' },
+      { kind: 'move.enter', tick: 5, night: 2, actor: 'clem', room: 'playroom', via: 'd_music_playroom' },
+    ]), 2);
+    expect(p.lanternRecords.find(r => r.room === 'music_room')).toBeUndefined();
+  });
+
+  // The counterpart: relighting resumes watching from the same spot, with no
+  // fresh `lantern.place` event (relighting doesn't move the lantern).
+  it('resumes watching after a relight, with no new place event', () => {
+    const p = projectForHouse(log([
+      { kind: 'lantern.place', tick: 1, night: 1, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+      { kind: 'lantern.snuff', tick: 2, night: 1, actor: 'wren', lantern: 'lantern_a', room: 'music_room' },
+      { kind: 'lantern.relight', tick: 3, night: 2, actor: 'clem', lantern: 'lantern_a', room: 'music_room' },
+      { kind: 'move.enter', tick: 5, night: 2, actor: 'moss', room: 'playroom', via: 'd_music_playroom' },
+    ]), 2);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room');
+    expect(rec).toBeDefined();
+    expect(rec!.crossings).toBe(1);
+  });
+
   it('counts flames lost in that night only', () => {
     const p = projectForHouse(log([
       { kind: 'flame.out', tick: 1, night: 2, reason: 'take', remaining: 4 },

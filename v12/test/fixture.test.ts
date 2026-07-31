@@ -130,14 +130,43 @@ describe('SIX_NIGHT_MATCH', () => {
     expect(text).toMatch(/was moved/i);
   });
 
+  // Slice-0/1 final review, item 3's fix, pinned against the REAL fixture
+  // (not just the synthetic cases in project.test.ts): lantern_a is placed in
+  // the hearth on Night One (tick 60, watching d_hearth_library) and never
+  // touched again, so it must still be reporting on Night Five — three full
+  // nights after its only lantern.place event. d_hearth_library is crossed
+  // exactly three times on night five: bell (tick 500), moss (tick 515), and
+  // moss again on the way home with the recovered sock (tick 540). Getting 0
+  // here would mean the stock lookup isn't reaching back across nights; 1 or
+  // 2 would mean the window boundaries or door-matching are wrong.
+  it('reports three crossings for the Night One lantern, still standing on night five', () => {
+    const text = renderReport(projectForHouse(SIX_NIGHT_MATCH, 5), HOLLOW).join('\n');
+    expect(text).toMatch(/Hearth Room lantern watched 3 figures cross/i);
+  });
+
   // Pins Task 13's fallback fix (task-13-report.md) against this fixture
   // specifically, not just report.test.ts's own synthetic one-line log: a
   // wrong-call night with nothing else to report must print the flame line
   // and STOP — never "the house saw nothing" beneath a flame that, in fact,
   // just went out.
-  it('renders night six as exactly the flame line and nothing else', () => {
-    expect(renderReport(projectForHouse(SIX_NIGHT_MATCH, 6), HOLLOW))
-      .toEqual(['One flame went out. 2 remain.']);
+  //
+  // RE-PINNED for the item-3 fix (slice-0/1 final review): this used to
+  // assert the array was EXACTLY `['One flame went out. 2 remain.']`, which
+  // incidentally encoded item 3's bug — lantern_a is placed in the hearth
+  // since Night One and never touched again, so a correct report must
+  // mention it even on a quiet Night Six, same as any other night. The
+  // fallback this test actually exists to pin (no false "the house saw
+  // nothing" beneath a flame that just went out) is now its own explicit
+  // assertion rather than implied by the array having exactly one element;
+  // the exact-array assertion stays, so a future silent change to either line
+  // still gets caught.
+  it('renders night six with the flame line and the standing lantern, and no false "saw nothing"', () => {
+    const lines = renderReport(projectForHouse(SIX_NIGHT_MATCH, 6), HOLLOW);
+    expect(lines).toEqual([
+      'One flame went out. 2 remain.',
+      'The Hearth Room lantern watched an empty doorway.',
+    ]);
+    expect(lines.join('\n')).not.toMatch(/saw nothing|stayed dark/i);
   });
 });
 
