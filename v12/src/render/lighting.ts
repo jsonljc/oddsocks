@@ -64,6 +64,17 @@ export function drawLighting(
   // legibility in the dark rests on that untouched strip, not on
   // MAX_OVERLAY's cap. Switch this to one world-sized rect (or shrink GAP)
   // and that protection disappears — nothing here would catch it.
+  //
+  // Z-ORDER (Task 10, `render/actors.ts`): whatever wires the scene must
+  // append this layer's Graphics BEFORE actors.ts's actor/name layers, so
+  // actor bodies composite ABOVE this overlay — otherwise a "silhouette"
+  // (alpha as low as 0.51) is nearly swallowed by this overlay's own alpha
+  // (up to 0.8648) if painted on top of it instead. Task 10 also recommends
+  // — but does not implement, since drawRooms isn't its file — putting
+  // drawRooms' door layer above this overlay too, the same way, which would
+  // turn the GAP-geometry accident described above into a structural
+  // guarantee instead. See `render/actors.ts`'s "Z-ORDER DECISION" docstring
+  // for the full worked numbers and the recommended full stack.
   for (const room of house.rooms) {
     layer.rect(room.bounds.x, room.bounds.y, room.bounds.w, room.bounds.h);
     layer.fill({ color: 0x05040a, alpha: overlayAlphaFor(night, room.id, dark) });
