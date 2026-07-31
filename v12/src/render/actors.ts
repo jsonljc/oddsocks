@@ -127,7 +127,17 @@ function desaturate(colour: number, amount: number): number {
  *  changes that. Only the overlay-vs-actors relationship (this function's
  *  own layers, decided) and the overlay-vs-doors relationship (a
  *  recommendation, not a code change — drawRooms/drawLighting aren't this
- *  task's files) are addressed. */
+ *  task's files) are addressed.
+ *
+ *  TASK 11 ADDENDUM — decided, adopted: `drawRooms` (render/rooms.ts) now
+ *  returns `{floor, doors, labels}` instead of appending them to `world`
+ *  itself, specifically so `app/scenes/night.ts` can interleave the lighting
+ *  layer between `floor` and `doors`, matching the stack above exactly.
+ *  Checked once actually on screen (see task-11-report.md): most of a door's
+ *  legibility already came from the untouched GAP, as this docstring says
+ *  above, so the visible delta from this change is real but small — each
+ *  door's 10px-per-side stub inside its own room, which the overlay used to
+ *  darken along with the rest of the room and no longer does. */
 export function drawActors(
   layer: Graphics, nameLayer: Container, sim: Sim, observerId: ActorId,
 ): void {

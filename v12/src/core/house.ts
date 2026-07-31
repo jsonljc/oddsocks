@@ -1,4 +1,4 @@
-import type { Rect, Vec2 } from './geometry';
+import { dist, type Rect, type Vec2 } from './geometry';
 
 export type RoomId = string;
 export type DoorId = string;
@@ -24,6 +24,20 @@ export function exitsOf(h: House, id: RoomId): Door[] {
 
 export function otherSide(d: Door, from: RoomId): RoomId {
   return d.a === from ? d.b : d.a;
+}
+
+/** v12.2 §4 ("F toggles the nearest door" — Task 11's own scene control):
+ *  picks whichever of `room`'s exits is physically closest to `at`, not
+ *  merely first in `house.doors`' declaration order. A three-door hub with
+ *  `exitsOf(...)[0]` used as a stand-in for "nearest" toggles the same door
+ *  regardless of where the player is standing — test/house.test.ts's
+ *  `nearestDoor` suite pins two cases (a three-door and a two-door room)
+ *  where the true nearest door is provably NOT index [0]. */
+export function nearestDoor(h: House, room: RoomId, at: Vec2): Door | undefined {
+  return exitsOf(h, room).reduce<Door | undefined>(
+    (best, d) => (!best || dist(at, d.at) < dist(at, best.at)) ? d : best,
+    undefined,
+  );
 }
 
 /** v12.2 §3 — a room may have up to three doors. v12.0's two-door ceiling forced

@@ -210,7 +210,7 @@ export class Sim {
     if (!open) this.state.closedDoors.add(doorId);
     this.sink.emit({
       kind: 'door.toggle', tick: this.state.tick, night: this.state.night,
-      actor: actorId, door: doorId, open,
+      actor: actorId, door: doorId, open, room: a.room,
     });
     return { ok: true };
   }

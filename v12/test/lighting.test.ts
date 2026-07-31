@@ -1,4 +1,4 @@
-import { maskCirclesFor, overlayAlphaFor, MAX_OVERLAY } from '../src/render/lighting';
+import { maskCirclesFor, overlayAlphaFor, glowPolygon, MAX_OVERLAY } from '../src/render/lighting';
 import { HOLLOW } from '../src/house/hollow';
 import { LANTERN_RADIUS } from '../src/core/light';
 
@@ -68,5 +68,42 @@ describe('overlayAlphaFor', () => {
   it('makes a dark room visibly darker than a lit one on the same night', () => {
     expect(overlayAlphaFor(4, 'kitchen', allDark))
       .toBeGreaterThan(overlayAlphaFor(4, 'kitchen', none));
+  });
+});
+
+// Task 9's report quantified an unclipped light circle bleeding up to 66px
+// past a wall into the room next door for a PLACED lantern (LANTERN_RADIUS
+// 120) hugging it: at the closest a clampInside() position allows
+// (ACTOR_RADIUS = 14 from the wall), reach past the wall is 120 - 14 = 106px,
+// and the inter-room GAP is only 40px, so 66px lands inside the neighbour's
+// own bounds — a room v12.2 §13 still calls dark, lit anyway. A CARRIED
+// lantern (radius 45) never reaches: 45 - 14 = 31 < 40, short of even
+// crossing the gap. glowPolygon is the fix: approximate a glow ring as an
+// N-gon and clamp every vertex into the SOURCE's OWN room rect, so nothing
+// drawn from it can ever land in a different room's bounds, regardless of
+// source radius or distance to the wall.
+describe('glowPolygon', () => {
+  const rect = { x: 0, y: 0, w: 100, h: 100 };
+
+  it('never returns a vertex outside the room rect, even for a wall-hugging, oversized circle', () => {
+    // Worst case: centre near a corner, radius far larger than the room —
+    // deliberately more extreme than the 120-in-a-260x200-room worst case
+    // this is meant to guard, to prove the clamp is unconditional.
+    const pts = glowPolygon(5, 5, 500, rect);
+    for (const p of pts) {
+      expect(p.x).toBeGreaterThanOrEqual(rect.x);
+      expect(p.x).toBeLessThanOrEqual(rect.x + rect.w);
+      expect(p.y).toBeGreaterThanOrEqual(rect.y);
+      expect(p.y).toBeLessThanOrEqual(rect.y + rect.h);
+    }
+  });
+
+  it('leaves a circle that already fits inside the rect undistorted', () => {
+    const pts = glowPolygon(50, 50, 10, rect);
+    for (const p of pts) expect(Math.hypot(p.x - 50, p.y - 50)).toBeCloseTo(10, 5);
+  });
+
+  it('produces the requested number of vertices', () => {
+    expect(glowPolygon(50, 50, 10, rect, 16)).toHaveLength(16);
   });
 });

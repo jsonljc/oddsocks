@@ -1,6 +1,6 @@
 import {
   validateHouse, exitsOf, roomById, doorCount, bindEligible,
-  houseAfterSealing, MAX_DOORS, BIND_DOORS,
+  houseAfterSealing, nearestDoor, MAX_DOORS, BIND_DOORS,
 } from '../src/core/house';
 import { HOLLOW } from '../src/house/hollow';
 
@@ -126,5 +126,53 @@ describe('validateHouse', () => {
 
   it('roomById throws on an unknown id rather than returning undefined', () => {
     expect(() => roomById(HOLLOW, 'no_such_room')).toThrow();
+  });
+});
+
+// Task 11's brief describes controls as "F toggles the nearest door" but its
+// own reference dispatch() took `exitsOf(house, room)[0]` — always the FIRST
+// exit in house.doors' declaration order, regardless of where the player is
+// standing. In a three-door hub that's a real defect: pressing F near one
+// door can silently toggle a different one across the room. nearestDoor
+// exists so the brief's own stated control actually does what it says.
+describe('nearestDoor', () => {
+  it('picks the closer of two doors in a three-door room, not the first one declared', () => {
+    // music_room's doors, in house.doors declaration order: d_nursery_music
+    // (west wall), d_music_bathroom (east wall), d_music_playroom (south).
+    // exitsOf preserves that order, so d_nursery_music is index [0] — picking
+    // a point near the EAST wall proves this isn't just "[0] again by luck".
+    const bounds = HOLLOW.rooms.find(r => r.id === 'music_room')!.bounds;
+    const nearEastWall = { x: bounds.x + bounds.w - 10, y: bounds.y + bounds.h / 2 };
+    const exits = exitsOf(HOLLOW, 'music_room');
+    expect(exits[0]!.id).toBe('d_nursery_music'); // pin the "old code would pick this" premise
+    expect(nearestDoor(HOLLOW, 'music_room', nearEastWall)?.id).toBe('d_music_bathroom');
+  });
+
+  it('picks the closer of two doors in a two-door room, not the first one declared', () => {
+    // cellar's doors, in declaration order: d_cellar_library (south wall),
+    // d_bed_cellar (north wall) — so index [0] is d_cellar_library.
+    const bounds = HOLLOW.rooms.find(r => r.id === 'cellar')!.bounds;
+    const nearNorthWall = { x: bounds.x + 20, y: bounds.y + 1 };
+    const exits = exitsOf(HOLLOW, 'cellar');
+    expect(exits[0]!.id).toBe('d_cellar_library');
+    expect(nearestDoor(HOLLOW, 'cellar', nearNorthWall)?.id).toBe('d_bed_cellar');
+  });
+
+  it('returns the only door of a single-exit room regardless of position', () => {
+    const solo = {
+      rooms: [{ id: 'a', name: 'A', floor: 0, bounds: { x: 0, y: 0, w: 100, h: 100 }, centralObject: '' }],
+      doors: [{ id: 'd', a: 'a', b: 'a', at: { x: 999, y: 999 }, span: 20, kind: 'doorway' as const }],
+      sealOrder: [],
+    };
+    expect(nearestDoor(solo, 'a', { x: 0, y: 0 })?.id).toBe('d');
+  });
+
+  it('returns undefined for a room with no doors', () => {
+    const stranded = {
+      rooms: [{ id: 'a', name: 'A', floor: 0, bounds: { x: 0, y: 0, w: 100, h: 100 }, centralObject: '' }],
+      doors: [],
+      sealOrder: [],
+    };
+    expect(nearestDoor(stranded, 'a', { x: 0, y: 0 })).toBeUndefined();
   });
 });

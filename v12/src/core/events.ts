@@ -15,7 +15,13 @@ interface Base { tick: number; night: number }
 
 export type MatchEvent =
   | (Base & { kind: 'move.enter'; actor: ActorId; room: RoomId; via: DoorId })
-  | (Base & { kind: 'door.toggle'; actor: ActorId; door: DoorId; open: boolean })
+  // `room` added in Task 11: without it, audibleVolume (src/audio/sounds.ts)
+  // has no room to compare against a listener's, and a version of
+  // audibleVolume that special-cased "no room -> full volume" made every
+  // door creak in the house audible at full strength everywhere, regardless
+  // of distance — found while wiring the night scene, fixed by making the
+  // event self-describing the same way the lantern events already are.
+  | (Base & { kind: 'door.toggle'; actor: ActorId; door: DoorId; open: boolean; room: RoomId })
   | (Base & { kind: 'lantern.carry' | 'lantern.place' | 'lantern.snuff' | 'lantern.relight';
               actor: ActorId; lantern: LanternId; room: RoomId; watching?: DoorId })
   | (Base & { kind: 'take.warn' | 'take.complete'; actor: ActorId; victim: ActorId; room: RoomId })
