@@ -36,6 +36,26 @@ describe('projectForHouse', () => {
     expect(JSON.stringify(p.lanternRecords)).not.toContain('moss');
   });
 
+  // Task 12 review: the switch loop that builds `watched` used to iterate
+  // `nightly` in raw array order, the one place in this function that didn't
+  // sort by tick the way flamesRemaining and the crowd fold both do. A
+  // lantern.carry listed BEFORE its room's lantern.place in array order, but
+  // at a LATER tick, found no `watched` record yet (the place hadn't been
+  // "seen"), so `moved` silently stayed false even though the lantern really
+  // was picked back up later that night. Task 13's renderReport reads
+  // `moved` directly, so this was a false "nobody moved the lantern" line
+  // from a house whose entire premise is that it only ever states facts.
+  it('detects a lantern being moved even when the carry is listed before the place in the log', () => {
+    const p = projectForHouse(log([
+      // Reverse array order: the carry (tick 20, chronologically LATER)
+      // appears before the place (tick 5, chronologically EARLIER).
+      { kind: 'lantern.carry', tick: 20, night: 3, actor: 'clem', lantern: 'lantern_a', room: 'music_room' },
+      { kind: 'lantern.place', tick: 5, night: 3, actor: 'bell', lantern: 'lantern_a', room: 'music_room', watching: 'd_music_playroom' },
+    ]), 3);
+    const rec = p.lanternRecords.find(r => r.room === 'music_room')!;
+    expect(rec.moved).toBe(true);
+  });
+
   it('counts flames lost in that night only', () => {
     const p = projectForHouse(log([
       { kind: 'flame.out', tick: 1, night: 2, reason: 'take', remaining: 4 },

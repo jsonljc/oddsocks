@@ -42,6 +42,15 @@ export interface HouseProjection {
 export function projectForHouse(log: MatchLog, night: number): HouseProjection {
   const nightly = log.events.filter(e => e.night === night);
 
+  // A hand-authored log (Task 14 writes one covering six nights) has no
+  // enforced invariant that its array order matches tick order.
+  // flamesRemaining below already can't trust it, and the crowd fold further
+  // down sorts explicitly for the same reason — this single sorted copy is
+  // now shared by every computation in this function that depends on which
+  // of two same-night events happened first, so there is exactly one place
+  // "chronological order" is defined, not several that could disagree.
+  const byTick = [...nightly].sort((a, b) => a.tick - b.tick);
+
   const didNotReturn: ActorId[] = [];
   const roomsDisturbed = new Set<RoomId>();
   const floorSounds: { floor: number; sound: SoundKind }[] = [];
@@ -82,7 +91,16 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
     }
   }
 
-  for (const e of nightly) {
+  // Iterates byTick, not nightly: a lantern.carry that picks a lantern back
+  // up belongs AFTER the lantern.place that put it down, chronologically,
+  // regardless of which order a hand-authored log happens to list them in.
+  // Processing in raw array order let a carry listed before its own place
+  // find no `watched` record yet (the place hadn't been "seen"), silently
+  // leaving `moved: false` even though the lantern really was picked up
+  // later that night — a false "nobody moved the lantern" line, since
+  // Task 13's renderReport reads `moved` directly. Found by the Task 12
+  // review; see the fix report appended to task-12-report.md.
+  for (const e of byTick) {
     switch (e.kind) {
       case 'take.complete':
         didNotReturn.push(e.victim);
@@ -120,7 +138,7 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
   // reports what crossed it," in "numbers, directions, and roughly when...
   // never names." Only the count survives projection here — see the note on
   // `outward`/`hurried` below for why direction and hurriedness do not, yet.
-  for (const e of nightly) {
+  for (const e of byTick) {
     if (e.kind !== 'move.enter') continue;
     for (const [room, rec] of watched) {
       if (rec.doors.has(e.via)) crossings.set(room, (crossings.get(room) ?? 0) + 1);
@@ -155,11 +173,9 @@ export function projectForHouse(log: MatchLog, night: number): HouseProjection {
   // v12.2 §14's own notice: the crowd count must be over distinct BODIES
   // ending the night in a room, not over how many times a doorway got
   // crossed — one actor re-entering a room three times is one body, not
-  // three. Fold to each actor's LAST move.enter this night (sorted by tick
-  // rather than trusting the log's own array order, for the same reason
-  // flamesRemaining above does not trust it) before counting who that
-  // leaves standing in which room.
-  const byTick = [...nightly].sort((a, b) => a.tick - b.tick);
+  // three. Fold to each actor's LAST move.enter this night (byTick, computed
+  // once above and shared by every loop in this function) before counting
+  // who that leaves standing in which room.
   const lastRoomThisNight = new Map<ActorId, RoomId>();
   for (const e of byTick) {
     if (e.kind === 'move.enter') lastRoomThisNight.set(e.actor, e.room);
