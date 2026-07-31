@@ -107,8 +107,15 @@ function desaturate(colour: number, amount: number): number {
  *  drawRooms' door layer above the lighting overlay too, the same way
  *  actors are here. That turns an accidental, geometry-dependent protection
  *  into a structural one and retires the fragility Task 9 flagged, at zero
- *  cost — nothing in v12.2 says a door should darken. See the matching note
- *  left at render/lighting.ts's drawLighting.
+ *  cost to rule-compliance — nothing in v12.2 says a door should darken.
+ *  Implementation cost is not zero, though: unlike this function and
+ *  drawLighting, which both take a caller-owned layer, drawRooms
+ *  (render/rooms.ts) creates its own Graphics/Text internally and appends
+ *  them to `world` itself, with no seam between floor and doors for a
+ *  caller to inject anything into — so this recommendation needs drawRooms
+ *  restructured (split into stages, or made to return its layers for the
+ *  caller to sequence), not a drop-in world.addChild() reorder. See the
+ *  matching note left at render/lighting.ts's drawLighting.
  *
  *  Full recommended stack, bottom to top:
  *    floor -> lighting overlay -> doors -> room labels -> actor bodies
