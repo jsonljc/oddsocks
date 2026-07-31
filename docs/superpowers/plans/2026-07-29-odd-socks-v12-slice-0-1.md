@@ -3056,6 +3056,31 @@ git commit -m "feat(v12): identity dissolves in the dark, decided in core not re
 
 ## Task 11: Audio, input, and the night scene — slice 0 playable
 
+> ### Three things inherited from Tasks 9 and 10 that only this task can settle
+>
+> This is where the scene is finally wired, so it is where the render decisions stop being
+> theoretical. None of these can be caught by a test — only by looking.
+>
+> 1. **Z-order. Read `render/actors.ts`'s "Z-ORDER DECISION" docstring before writing any
+>    `addChild` call.** Task 10 chose actors compositing **above** the lighting overlay, with the
+>    arithmetic to back it: under a dark room's overlay (alpha 0.8648 on night six) only ~13.5% of
+>    a silhouette's own pixel survives if it is painted underneath. §4 promises darkness degrades
+>    you to a silhouette and never to nothing — painted in the wrong order, the silhouette survives
+>    as *data* and not as *pixels*. Order the layers deliberately and say in the acceptance notes
+>    that you did.
+> 2. **Doors above the overlay — a recommendation, not a drop-in.** Painting the opaque door layer
+>    after the overlay would make door legibility independent of `MAX_OVERLAY` and of the overlay's
+>    painted area, structurally retiring the §3 fragility recorded in Task 9 (that exits stay
+>    legible only because the inter-room gap is never painted). **But `drawRooms` has no seam for
+>    it** — it appends floor, doors and labels into `world` in one pass, unlike `drawLighting` and
+>    `drawActors` which both take a caller-owned layer. Adopting it means restructuring
+>    `drawRooms`'s API. Decide, and record the decision either way.
+> 3. **Two by-eye findings from Task 9 to resolve, not re-note.** The warm lantern glow may not
+>    read as brighter than an ordinary lit room (~50/50 at the lantern's own centre on night six),
+>    and a placed lantern within `ACTOR_RADIUS` of a wall paints up to 66px of glow into the room
+>    next door — lighting a room that is mechanically still dark, which is exactly the confusion §3
+>    exists to prevent. You have a running scene; they have been waiting for one.
+
 **Files:**
 - Create: `v12/src/audio/sounds.ts`, `v12/src/app/input.ts`, `v12/src/app/scenes/night.ts`, `v12/src/app/main.ts`
 - Test: `v12/test/sounds.test.ts`, `v12/test/input.test.ts`
