@@ -64,6 +64,18 @@ describe('renderReport', () => {
     const one = renderReport(projectForHouse(log(roster(['wren', 'bell', 'clem', 'moss', 'sparrow'])), 3), HOLLOW);
     const two = renderReport(projectForHouse(log(roster(['clem', 'moss', 'sparrow', 'wren', 'bell'])), 3), HOLLOW);
     expect(one).toEqual(two);
+
+    // Review finding: `pike` is held FIXED across both variants (the one
+    // identity §8 grants), so a bug that leaks `didNotReturn` onto a SECOND
+    // line — e.g. the crowd line reusing it, since this fixture also
+    // triggers `crowded` — would print the identical (wrong) text in both
+    // arms and `toEqual` above could not see it; a same-value leak is
+    // invisible to a differential test by construction, not a fixable
+    // property of that assertion. `pike` is licensed on exactly one line
+    // (§8 grants naming who didn't come back); this pins it to that one line
+    // and no other, closing the gap directly rather than relying on identity
+    // differing between arms to expose it.
+    expect(one.filter(l => l.includes('pike'))).toEqual(['pike did not return.']);
   });
 
   it('names a child who did not return, because v12.2 §8 grants exactly that', () => {
