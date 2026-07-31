@@ -106,7 +106,11 @@ describe('SIX_NIGHT_MATCH', () => {
 
   it('reports the night-three lantern as both crossed (plural) and moved', () => {
     const text = renderReport(projectForHouse(SIX_NIGHT_MATCH, 3), HOLLOW).join('\n');
-    expect(text).toMatch(/2 figures cross/i);
+    // Pinned to report.ts's exact template (`watched ${n} figures cross`), not
+    // a loose /2 figures cross/: that looser pattern would also match "12
+    // figures cross" (substring "2 figures cross"), so it does not actually
+    // pin the count to two.
+    expect(text).toMatch(/watched 2 figures cross/i);
     expect(text).toMatch(/was moved/i);
   });
 
