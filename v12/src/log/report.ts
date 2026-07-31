@@ -29,9 +29,10 @@ export function renderReport(p: HouseProjection, house: House): string[] {
   // EVERY morning, not only on a night one went out — so this line is
   // unconditional. A quiet night that silently omitted the count would let
   // the children lose track of the clock (the whole point of the flame
-  // economy, per §7/§13). This is also why the "nothing happened at all"
-  // fallback below can key on `lines.length === 1`: this push always runs
-  // first, so one line in the array means nothing else printed.
+  // economy, per §7/§13). This push always running first is why the
+  // "nothing happened" fallback below can use `lines.length === 1` as PART
+  // of its check — but not the whole of it; see the guard at that site for
+  // why `flamesLost === 0` also has to hold.
   lines.push(
     p.flamesLost === 0 ? `No flame went out. ${p.flamesRemaining} remain.`
     : p.flamesLost === 1 ? `One flame went out. ${p.flamesRemaining} remain.`
